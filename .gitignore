@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.streamlit/secrets.toml
+
+forest_calculation_output.xlsx
+forest_calculation_output_summary_by_site.xlsx
+forest_calculation_output_details.xlsx
+template_summary_by_site.xlsx
+template_details.xlsx
+
+~$*.xlsx
