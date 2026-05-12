@@ -7,13 +7,15 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from run_forest_calculation import RAI_PER_HECTARE, PLOT_AREA_HA, run_calculation_split_outputs
+import run_forest_calculation as calc
 
 
 APP_TITLE = "Forest Biomass, Volume, IVI and Shannon Calculator"
 APP_SUBTITLE = (
     "Upload field survey data using the provided Excel template and generate calculated results automatically."
 )
+PLOT_AREA_HA = calc.PLOT_AREA_HA
+RAI_PER_HECTARE = calc.RAI_PER_HECTARE
 TEMPLATE_FILE = Path("template.xlsx")
 MASTER_FILE = Path("species_reference_master_v1.xlsx")
 OUTPUT_BASE_FILENAME = "forest_calculation_output.xlsx"
@@ -288,13 +290,25 @@ def run_uploaded_workflow(
         uploaded_path.write_bytes(uploaded_file.getbuffer())
 
         output_base = temp_dir / OUTPUT_BASE_FILENAME
-        summary_path, detail_path, result_sheets = run_calculation_split_outputs(
-            input_file=uploaded_path,
-            master_file=MASTER_FILE,
-            output_base=output_base,
-            plot_area_ha=plot_area_ha,
-            rai_per_hectare=rai_per_hectare,
-        )
+        split_runner = getattr(calc, "run_calculation_split_outputs", None)
+        if split_runner is not None:
+            summary_path, detail_path, result_sheets = split_runner(
+                input_file=uploaded_path,
+                master_file=MASTER_FILE,
+                output_base=output_base,
+                plot_area_ha=plot_area_ha,
+                rai_per_hectare=rai_per_hectare,
+            )
+        else:
+            result_sheets = calc.process_workbook(
+                input_file=uploaded_path,
+                master_file=MASTER_FILE,
+                plot_area_ha=plot_area_ha,
+                rai_per_hectare=rai_per_hectare,
+            )
+            summary_path, detail_path = calc.resolve_output_paths(uploaded_path, str(output_base))
+            calc.write_summary_by_site_workbook(summary_path, result_sheets)
+            calc.write_detail_workbook(detail_path, result_sheets)
         return summary_path.read_bytes(), detail_path.read_bytes(), result_sheets
 
 
