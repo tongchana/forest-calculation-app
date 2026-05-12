@@ -84,7 +84,9 @@ If `template.xlsx` or `species_reference_master_v1.xlsx` is missing from the dep
 3. Save the workbook as `.xlsx`
 4. Upload the completed workbook
 5. Click **Calculate**
-6. Preview the summaries and download `forest_calculation_output.xlsx`
+6. Preview the summaries and download:
+   - `forest_calculation_output_summary_by_site.xlsx`
+   - `forest_calculation_output_details.xlsx`
 
 ## Calculation scope
 

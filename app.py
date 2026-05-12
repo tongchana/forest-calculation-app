@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from run_forest_calculation import RAI_PER_HECTARE, PLOT_AREA_HA, run_calculation
+from run_forest_calculation import RAI_PER_HECTARE, PLOT_AREA_HA, run_calculation_split_outputs
 
 
 APP_TITLE = "Forest Biomass, Volume, IVI and Shannon Calculator"
@@ -16,7 +16,9 @@ APP_SUBTITLE = (
 )
 TEMPLATE_FILE = Path("template.xlsx")
 MASTER_FILE = Path("species_reference_master_v1.xlsx")
-OUTPUT_FILENAME = "forest_calculation_output.xlsx"
+OUTPUT_BASE_FILENAME = "forest_calculation_output.xlsx"
+SUMMARY_OUTPUT_FILENAME = "forest_calculation_output_summary_by_site.xlsx"
+DETAIL_OUTPUT_FILENAME = "forest_calculation_output_details.xlsx"
 PREVIEW_SHEETS = [
     "SUMMARY_ALL",
     "SUMMARY_BIOMASS",
@@ -275,21 +277,25 @@ def preview_results(result_sheets: dict[str, pd.DataFrame]) -> None:
             st.dataframe(unmatched, use_container_width=True)
 
 
-def run_uploaded_workflow(uploaded_file, plot_area_ha: float, rai_per_hectare: float) -> tuple[bytes, dict[str, pd.DataFrame]]:
+def run_uploaded_workflow(
+    uploaded_file,
+    plot_area_ha: float,
+    rai_per_hectare: float,
+) -> tuple[bytes, bytes, dict[str, pd.DataFrame]]:
     with tempfile.TemporaryDirectory() as tmp_dir:
         temp_dir = Path(tmp_dir)
         uploaded_path = temp_dir / uploaded_file.name
         uploaded_path.write_bytes(uploaded_file.getbuffer())
 
-        output_path = temp_dir / OUTPUT_FILENAME
-        _, result_sheets = run_calculation(
+        output_base = temp_dir / OUTPUT_BASE_FILENAME
+        summary_path, detail_path, result_sheets = run_calculation_split_outputs(
             input_file=uploaded_path,
             master_file=MASTER_FILE,
-            output_file=output_path,
+            output_base=output_base,
             plot_area_ha=plot_area_ha,
             rai_per_hectare=rai_per_hectare,
         )
-        return output_path.read_bytes(), result_sheets
+        return summary_path.read_bytes(), detail_path.read_bytes(), result_sheets
 
 
 def main() -> None:
@@ -297,8 +303,10 @@ def main() -> None:
     inject_css()
     render_sidebar()
 
-    if "result_bytes" not in st.session_state:
-        st.session_state.result_bytes = None
+    if "summary_result_bytes" not in st.session_state:
+        st.session_state.summary_result_bytes = None
+    if "detail_result_bytes" not in st.session_state:
+        st.session_state.detail_result_bytes = None
     if "result_sheets" not in st.session_state:
         st.session_state.result_sheets = None
     if "last_error" not in st.session_state:
@@ -323,7 +331,7 @@ def main() -> None:
         3. Save the Excel file.<br>
         4. Upload the completed file.<br>
         5. Click Calculate.<br>
-        6. Preview the summary and download the calculated Excel file.
+        6. Preview the summary and download the summary and detail Excel files.
         """,
     )
 
@@ -367,7 +375,8 @@ def main() -> None:
 
     if calculate_clicked:
         st.session_state.last_error = None
-        st.session_state.result_bytes = None
+        st.session_state.summary_result_bytes = None
+        st.session_state.detail_result_bytes = None
         st.session_state.result_sheets = None
 
         if uploaded_file is None:
@@ -384,15 +393,16 @@ def main() -> None:
         else:
             with st.spinner("Running forest calculation workflow..."):
                 try:
-                    result_bytes, result_sheets = run_uploaded_workflow(
+                    summary_result_bytes, detail_result_bytes, result_sheets = run_uploaded_workflow(
                         uploaded_file=uploaded_file,
                         plot_area_ha=plot_area_ha,
                         rai_per_hectare=rai_per_hectare,
                     )
-                    st.session_state.result_bytes = result_bytes
+                    st.session_state.summary_result_bytes = summary_result_bytes
+                    st.session_state.detail_result_bytes = detail_result_bytes
                     st.session_state.result_sheets = result_sheets
                     st.success("Calculation completed successfully.")
-                    st.info("You can preview the results below and download the calculated Excel file.")
+                    st.info("You can preview the results below and download the summary and detail Excel files.")
                 except Exception as exc:  # noqa: BLE001
                     st.session_state.last_error = traceback.format_exc()
                     st.error(
@@ -407,14 +417,27 @@ def main() -> None:
         preview_results(st.session_state.result_sheets)
 
         st.markdown('<div class="section-label">Step 5</div>', unsafe_allow_html=True)
-        render_card("Download Calculated Excel", "Download the generated workbook for reporting, review, or sharing.")
-        st.download_button(
-            "Download Calculated Excel",
-            data=st.session_state.result_bytes,
-            file_name=OUTPUT_FILENAME,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
+        render_card(
+            "Download Calculated Excel Files",
+            "Download the generated summary-by-site workbook and the detailed workbook separately.",
         )
+        dl_col1, dl_col2 = st.columns(2)
+        with dl_col1:
+            st.download_button(
+                "Download Summary-by-site Excel",
+                data=st.session_state.summary_result_bytes,
+                file_name=SUMMARY_OUTPUT_FILENAME,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+        with dl_col2:
+            st.download_button(
+                "Download Details Excel",
+                data=st.session_state.detail_result_bytes,
+                file_name=DETAIL_OUTPUT_FILENAME,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
 
 
 if __name__ == "__main__":

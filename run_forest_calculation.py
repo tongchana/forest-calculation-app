@@ -1569,6 +1569,34 @@ def run_calculation(
     return output_path, output_sheets
 
 
+def run_calculation_split_outputs(
+    input_file: str | Path,
+    master_file: str | Path,
+    output_base: str | Path | None = None,
+    plot_area_ha: float = PLOT_AREA_HA,
+    rai_per_hectare: float = RAI_PER_HECTARE,
+) -> tuple[Path, Path, dict[str, pd.DataFrame]]:
+    input_path = Path(input_file)
+    master_path = Path(master_file)
+
+    if not input_path.exists():
+        raise FileNotFoundError(f"Input file not found: {input_path}")
+    if not master_path.exists():
+        raise FileNotFoundError(f"Master file not found: {master_path}")
+
+    output_sheets = process_workbook(
+        input_file=input_path,
+        master_file=master_path,
+        plot_area_ha=plot_area_ha,
+        rai_per_hectare=rai_per_hectare,
+    )
+
+    summary_file, detail_file = resolve_output_paths(input_path, str(output_base) if output_base else None)
+    write_summary_by_site_workbook(summary_file, output_sheets)
+    write_detail_workbook(detail_file, output_sheets)
+    return summary_file, detail_file, output_sheets
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     args = parse_args()
