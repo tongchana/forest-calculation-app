@@ -1100,7 +1100,9 @@ def build_dbh_class_summary(
         if frame.empty:
             return
 
-        dbh = pd.to_numeric(frame["DBH_cm"], errors="coerce")
+        # Use girth-based size classes for this summary table. Keep the existing
+        # output labels so downstream exports and templates continue to work.
+        girth = pd.to_numeric(frame["Girth_cm"], errors="coerce")
         n_plots = frame["Plot"].astype(str).str.strip().replace("", np.nan).dropna().nunique()
         total_area_ha = n_plots * plot_area_ha
         total_area_rai = total_area_ha * rai_per_hectare if pd.notna(total_area_ha) else np.nan
@@ -1111,9 +1113,9 @@ def build_dbh_class_summary(
         )
 
         class_specs = [
-            ("dbh 10-30", (dbh >= 10) & (dbh < 30)),
-            ("dbh 30-60", (dbh >= 30) & (dbh <= 60)),
-            ("dbh > 60", dbh > 60),
+            ("dbh 10-30", (girth >= 10) & (girth < 30)),
+            ("dbh 30-60", (girth >= 30) & (girth <= 60)),
+            ("dbh > 60", girth > 60),
         ]
 
         total_count = 0.0
