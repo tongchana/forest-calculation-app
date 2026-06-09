@@ -1775,6 +1775,9 @@ def write_component_summary_workbook(component_file: Path, template_file: Path, 
         else:
             return None
 
+        if total_number == 0:
+            total_number = float(len(frame.index))
+
         total_area_rai = plot_count * plot_area_ha * rai_per_hectare if plot_count else np.nan
         return safe_divide(total_number, total_area_rai)
 
