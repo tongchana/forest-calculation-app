@@ -235,6 +235,11 @@ def ensure_sheet_group_state(sheet_names: list[str]) -> None:
     st.session_state.sheet_group_signature = signature
     st.session_state.sheet_group_containers = [{"header": "Available sheets", "items": sheet_names.copy()}]
     st.session_state.sheet_group_name_count = 0
+    st.session_state.sheet_group_sortable_version = 0
+
+
+def bump_sheet_group_sortable_version() -> None:
+    st.session_state.sheet_group_sortable_version = st.session_state.get("sheet_group_sortable_version", 0) + 1
 
 
 def add_sheet_group() -> None:
@@ -244,6 +249,7 @@ def add_sheet_group() -> None:
     next_index = len(containers)
     containers.append(make_group_container(next_index))
     st.session_state.sheet_group_name_count = next_index
+    bump_sheet_group_sortable_version()
 
 
 def remove_sheet_group(reference_order: list[str]) -> None:
@@ -255,6 +261,7 @@ def remove_sheet_group(reference_order: list[str]) -> None:
     available_items = containers[0]["items"] + removed["items"]
     containers[0]["items"] = order_items_by_reference(available_items, reference_order)
     st.session_state.sheet_group_name_count = len(containers) - 1
+    bump_sheet_group_sortable_version()
 
 
 def normalize_sortable_containers(
@@ -362,11 +369,12 @@ def render_sheet_group_builder(sheet_names: list[str]) -> list[dict[str, list[st
         else:
             st.caption("All worksheets have been assigned to components.")
     else:
+        sortable_key = f"sheet_group_sortable_{st.session_state.get('sheet_group_sortable_version', 0)}_{group_count}"
         sortable_containers = sort_items(
             st.session_state.sheet_group_containers,
             multi_containers=True,
             custom_style=SORTABLE_STYLE,
-            key="sheet_group_sortable",
+            key=sortable_key,
         )
         st.session_state.sheet_group_containers = normalize_sortable_containers(sortable_containers, sheet_names)
 
