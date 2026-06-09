@@ -1693,49 +1693,31 @@ def write_component_summary_workbook(component_file: Path, template_file: Path, 
     component_names = get_component_group_names_in_order(sheets)[: len(COMPONENT_IVI_START_ROWS)]
     workbook = load_workbook(template_file)
     worksheet = workbook[workbook.sheetnames[0]]
+    worksheet["C5"] = "10-30"
 
     plot_area_ha = sheets["__meta__"]["plot_area_ha"]
     rai_per_hectare = sheets["__meta__"]["rai_per_hectare"]
 
-    def top_species_from_tree(component_name: str) -> str:
+    def species_count_from_tree(component_name: str) -> int:
         frame = build_ivi_summary(component_name, sheets)
         if frame.empty:
-            return "-"
-        return normalize_text(frame.iloc[0]["Species"]) or "-"
+            return 0
+        return int(frame["Species"].astype(str).str.strip().replace("", np.nan).dropna().nunique())
 
-    def top_species_from_sapling(component_name: str) -> str:
+    def species_count_from_sapling(component_name: str) -> int:
         frame = get_volume_detail_for_site(component_name, "Sapling", sheets)
         if frame.empty:
-            return "-"
-        working = frame.copy()
-        working["weight"] = pd.to_numeric(working["Number"], errors="coerce").fillna(0)
-        grouped = (
-            working.groupby("Species_raw", dropna=False)["weight"]
-            .sum()
-            .reset_index()
-            .sort_values(["weight", "Species_raw"], ascending=[False, True])
-        )
-        if grouped.empty:
-            return "-"
-        return normalize_text(grouped.iloc[0]["Species_raw"]) or "-"
+            return 0
+        return int(frame["Species_raw"].astype(str).str.strip().replace("", np.nan).dropna().nunique())
 
-    def top_species_from_seedling(component_name: str) -> str:
+    def species_count_from_seedling(component_name: str) -> int:
         frame = sheets["DETAIL_SEEDLING"]
         if frame.empty:
-            return "-"
+            return 0
         working = frame[frame["sheet_name"] == component_name].copy()
         if working.empty:
-            return "-"
-        working["weight"] = pd.to_numeric(working["Number"], errors="coerce").fillna(0)
-        grouped = (
-            working.groupby("Species", dropna=False)["weight"]
-            .sum()
-            .reset_index()
-            .sort_values(["weight", "Species"], ascending=[False, True])
-        )
-        if grouped.empty:
-            return "-"
-        return normalize_text(grouped.iloc[0]["Species"]) or "-"
+            return 0
+        return int(working["Species"].astype(str).str.strip().replace("", np.nan).dropna().nunique())
 
     def dbh_summary_map(component_name: str) -> dict[tuple[str, str], object]:
         frame = build_dbh_class_summary(component_name, sheets, plot_area_ha, rai_per_hectare)
@@ -1805,14 +1787,14 @@ def write_component_summary_workbook(component_file: Path, template_file: Path, 
         biomass_map = biomass_summary_map(component_name)
 
         worksheet.cell(density_row, 1).value = component_name
-        worksheet.cell(density_row, 2).value = top_species_from_tree(component_name)
+        worksheet.cell(density_row, 2).value = species_count_from_tree(component_name)
         worksheet.cell(density_row, 3).value = density_map.get(("tree", "dbh 10-30"))
         worksheet.cell(density_row, 4).value = density_map.get(("tree", "dbh 30-60"))
         worksheet.cell(density_row, 5).value = density_map.get(("tree", "dbh > 60"))
         worksheet.cell(density_row, 6).value = density_map.get(("tree", "total"))
-        worksheet.cell(density_row, 7).value = top_species_from_sapling(component_name)
+        worksheet.cell(density_row, 7).value = species_count_from_sapling(component_name)
         worksheet.cell(density_row, 8).value = density_map.get(("sapling", "total"))
-        worksheet.cell(density_row, 9).value = top_species_from_seedling(component_name)
+        worksheet.cell(density_row, 9).value = species_count_from_seedling(component_name)
         worksheet.cell(density_row, 10).value = density_map.get(("seedling", "count summary"))
 
         worksheet.cell(volume_row, 1).value = component_name
