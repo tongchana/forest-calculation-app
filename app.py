@@ -25,9 +25,11 @@ PLOT_AREA_HA = calc.PLOT_AREA_HA
 RAI_PER_HECTARE = calc.RAI_PER_HECTARE
 TEMPLATE_FILE = Path("template.xlsx")
 MASTER_FILE = Path("species_reference_master_v1.xlsx")
+COMPONENT_TEMPLATE_FILE = Path("summary_component.xlsx")
 OUTPUT_BASE_FILENAME = "forest_calculation_output.xlsx"
 SUMMARY_OUTPUT_FILENAME = "forest_calculation_output_summary_by_site.xlsx"
 DETAIL_OUTPUT_FILENAME = "forest_calculation_output_details.xlsx"
+COMPONENT_OUTPUT_FILENAME = "forest_component_summary.xlsx"
 PREVIEW_SHEETS = [
     "SUMMARY_ALL",
     "SUMMARY_BIOMASS",
@@ -506,7 +508,7 @@ def run_uploaded_workflow(
     plot_area_ha: float,
     rai_per_hectare: float,
     sheet_groups: list[dict[str, list[str]]] | None = None,
-) -> tuple[bytes, bytes, dict[str, pd.DataFrame]]:
+) -> tuple[bytes, bytes, bytes | None, dict[str, pd.DataFrame]]:
     with tempfile.TemporaryDirectory() as tmp_dir:
         temp_dir = Path(tmp_dir)
         uploaded_path = temp_dir / uploaded_file.name
@@ -534,7 +536,12 @@ def run_uploaded_workflow(
             summary_path, detail_path = calc.resolve_output_paths(uploaded_path, str(output_base))
             calc.write_summary_by_site_workbook(summary_path, result_sheets)
             calc.write_detail_workbook(detail_path, result_sheets)
-        return summary_path.read_bytes(), detail_path.read_bytes(), result_sheets
+        component_bytes = None
+        if sheet_groups and COMPONENT_TEMPLATE_FILE.exists():
+            component_path = temp_dir / COMPONENT_OUTPUT_FILENAME
+            calc.write_component_summary_workbook(component_path, COMPONENT_TEMPLATE_FILE, result_sheets)
+            component_bytes = component_path.read_bytes()
+        return summary_path.read_bytes(), detail_path.read_bytes(), component_bytes, result_sheets
 
 
 def main() -> None:
@@ -546,6 +553,8 @@ def main() -> None:
         st.session_state.summary_result_bytes = None
     if "detail_result_bytes" not in st.session_state:
         st.session_state.detail_result_bytes = None
+    if "component_result_bytes" not in st.session_state:
+        st.session_state.component_result_bytes = None
     if "result_sheets" not in st.session_state:
         st.session_state.result_sheets = None
     if "last_error" not in st.session_state:
@@ -612,6 +621,8 @@ def main() -> None:
         else:
             if uploaded_sheet_names:
                 selected_sheet_groups = render_sheet_group_builder(uploaded_sheet_names)
+    if selected_sheet_groups and not COMPONENT_TEMPLATE_FILE.exists():
+        st.warning("The component summary template file 'summary_component.xlsx' is missing, so the extra component-summary download will not be available.")
 
     st.markdown('<div class="section-label">Step 3</div>', unsafe_allow_html=True)
     render_card("Calculate", "Run the existing Python calculation workflow using the uploaded workbook and the default species master file.")
@@ -633,6 +644,7 @@ def main() -> None:
         st.session_state.last_error = None
         st.session_state.summary_result_bytes = None
         st.session_state.detail_result_bytes = None
+        st.session_state.component_result_bytes = None
         st.session_state.result_sheets = None
 
         if uploaded_file is None:
@@ -649,7 +661,7 @@ def main() -> None:
         else:
             with st.spinner("Running forest calculation workflow..."):
                 try:
-                    summary_result_bytes, detail_result_bytes, result_sheets = run_uploaded_workflow(
+                    summary_result_bytes, detail_result_bytes, component_result_bytes, result_sheets = run_uploaded_workflow(
                         uploaded_file=uploaded_file,
                         plot_area_ha=plot_area_ha,
                         rai_per_hectare=rai_per_hectare,
@@ -657,6 +669,7 @@ def main() -> None:
                     )
                     st.session_state.summary_result_bytes = summary_result_bytes
                     st.session_state.detail_result_bytes = detail_result_bytes
+                    st.session_state.component_result_bytes = component_result_bytes
                     st.session_state.result_sheets = result_sheets
                     st.success("Calculation completed successfully.")
                     st.info("You can preview the results below and download the summary and detail Excel files.")
@@ -676,9 +689,12 @@ def main() -> None:
         st.markdown('<div class="section-label">Step 5</div>', unsafe_allow_html=True)
         render_card(
             "Download Calculated Excel Files",
-            "Download the generated summary-by-site workbook and the detailed workbook separately.",
+            "Download the generated summary-by-site workbook, the detailed workbook, and the component-summary workbook when component groups are defined.",
         )
-        dl_col1, dl_col2 = st.columns(2)
+        if st.session_state.component_result_bytes:
+            dl_col1, dl_col2, dl_col3 = st.columns(3)
+        else:
+            dl_col1, dl_col2 = st.columns(2)
         with dl_col1:
             st.download_button(
                 "Download Summary-by-site Excel",
@@ -695,6 +711,15 @@ def main() -> None:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
             )
+        if st.session_state.component_result_bytes:
+            with dl_col3:
+                st.download_button(
+                    "Download Component Summary Excel",
+                    data=st.session_state.component_result_bytes,
+                    file_name=COMPONENT_OUTPUT_FILENAME,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
 
 
 if __name__ == "__main__":

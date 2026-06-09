@@ -131,6 +131,7 @@ DETAIL_WORKBOOK_SHEETS = [
     "DETAIL_BAMBOO",
     "CHECK_UNMATCHED_SPECIES",
 ]
+COMPONENT_IVI_START_ROWS = [31, 39, 47, 55, 63]
 
 SUMMARY_SECTION_SPECS = [
     ("Overall Summary", "SUMMARY_ALL"),
@@ -491,6 +492,12 @@ def filter_out_component_rows(frame: pd.DataFrame, component_names: set[str]) ->
     if frame.empty or not component_names or "sheet_name" not in frame.columns:
         return frame
     return frame[~frame["sheet_name"].astype(str).isin(component_names)].copy()
+
+
+def get_component_group_names_in_order(sheets: dict[str, pd.DataFrame]) -> list[str]:
+    meta = sheets.get("__meta__", {})
+    raw_groups = meta.get("sheet_groups", []) if isinstance(meta, dict) else []
+    return [normalize_text(group.get("name")) for group in raw_groups if normalize_text(group.get("name"))]
 
 
 def load_master_reference(master_file: Path) -> dict[str, dict[str, object]]:
@@ -908,6 +915,7 @@ def build_ivi_summary(source_sheet_name: str, sheets: dict[str, pd.DataFrame]) -
                 "Density (tree/rai)",
                 "Plot",
                 "Frequency",
+                "BA (m2)",
                 "Dominance",
                 "RDensity",
                 "RFrequency",
@@ -926,6 +934,7 @@ def build_ivi_summary(source_sheet_name: str, sheets: dict[str, pd.DataFrame]) -
                 "Density (tree/rai)",
                 "Plot",
                 "Frequency",
+                "BA (m2)",
                 "Dominance",
                 "RDensity",
                 "RFrequency",
@@ -943,6 +952,7 @@ def build_ivi_summary(source_sheet_name: str, sheets: dict[str, pd.DataFrame]) -
             "Density (tree/rai)",
             "Plot",
             "Frequency",
+            "BA (m2)",
             "Dominance",
             "RDensity",
             "RFrequency",
@@ -1677,6 +1687,176 @@ def write_detail_workbook(detail_file: Path, sheets: dict[str, pd.DataFrame]) ->
     for sheet_name in DETAIL_WORKBOOK_SHEETS:
         format_detail_worksheet(workbook[sheet_name])
     workbook.save(detail_file)
+
+
+def write_component_summary_workbook(component_file: Path, template_file: Path, sheets: dict[str, pd.DataFrame]) -> None:
+    component_names = get_component_group_names_in_order(sheets)[: len(COMPONENT_IVI_START_ROWS)]
+    workbook = load_workbook(template_file)
+    worksheet = workbook[workbook.sheetnames[0]]
+
+    plot_area_ha = sheets["__meta__"]["plot_area_ha"]
+    rai_per_hectare = sheets["__meta__"]["rai_per_hectare"]
+
+    def top_species_from_tree(component_name: str) -> str:
+        frame = build_ivi_summary(component_name, sheets)
+        if frame.empty:
+            return "-"
+        return normalize_text(frame.iloc[0]["Species"]) or "-"
+
+    def top_species_from_sapling(component_name: str) -> str:
+        frame = get_volume_detail_for_site(component_name, "Sapling", sheets)
+        if frame.empty:
+            return "-"
+        working = frame.copy()
+        working["weight"] = pd.to_numeric(working["Number"], errors="coerce").fillna(0)
+        grouped = (
+            working.groupby("Species_raw", dropna=False)["weight"]
+            .sum()
+            .reset_index()
+            .sort_values(["weight", "Species_raw"], ascending=[False, True])
+        )
+        if grouped.empty:
+            return "-"
+        return normalize_text(grouped.iloc[0]["Species_raw"]) or "-"
+
+    def top_species_from_seedling(component_name: str) -> str:
+        frame = sheets["DETAIL_SEEDLING"]
+        if frame.empty:
+            return "-"
+        working = frame[frame["sheet_name"] == component_name].copy()
+        if working.empty:
+            return "-"
+        working["weight"] = pd.to_numeric(working["Number"], errors="coerce").fillna(0)
+        grouped = (
+            working.groupby("Species", dropna=False)["weight"]
+            .sum()
+            .reset_index()
+            .sort_values(["weight", "Species"], ascending=[False, True])
+        )
+        if grouped.empty:
+            return "-"
+        return normalize_text(grouped.iloc[0]["Species"]) or "-"
+
+    def dbh_summary_map(component_name: str) -> dict[tuple[str, str], object]:
+        frame = build_dbh_class_summary(component_name, sheets, plot_area_ha, rai_per_hectare)
+        result: dict[tuple[str, str], object] = {}
+        if frame.empty:
+            return result
+        for _, row in frame.iterrows():
+            result[(normalize_text(row["Block"]).lower(), normalize_text(row["DBH Class"]).lower())] = row["Per rai"]
+        return result
+
+    def tq_summary_map(component_name: str) -> dict[str, object]:
+        frame = build_tq_volume_summary(component_name, sheets, plot_area_ha, rai_per_hectare)
+        result: dict[str, object] = {}
+        if frame.empty:
+            return result
+        for _, row in frame.iterrows():
+            result[normalize_text(row["Timber Quality Class (TQ)"]).lower()] = row["Per rai"]
+        return result
+
+    def biomass_summary_map(component_name: str) -> dict[str, object]:
+        frame = sheets["SUMMARY_BIOMASS"]
+        if frame.empty:
+            return {}
+        working = frame[frame["sheet_name"] == component_name]
+        if working.empty:
+            return {}
+        return {
+            "Ws_sum": working["Ws_sum"].sum(),
+            "Wb_sum": working["Wb_sum"].sum(),
+            "Wl_sum": working["Wl_sum"].sum(),
+            "Wr_sum": working["Wr_sum"].sum(),
+            "biomass_total_sum": working["biomass_total_sum"].sum(),
+        }
+
+    def fill_ivi_block(component_name: str, title_row: int) -> None:
+        worksheet.cell(title_row, 2).value = component_name
+        frame = build_ivi_summary(component_name, sheets)
+        data_start_row = title_row + 2
+        data_end_row = title_row + 6
+        for row_idx in range(data_start_row, data_end_row + 1):
+            for col_idx in range(1, 11):
+                worksheet.cell(row_idx, col_idx).value = None
+        if frame.empty:
+            return
+        top_rows = frame.head(5).reset_index(drop=True)
+        for offset, (_, row) in enumerate(top_rows.iterrows()):
+            target_row = data_start_row + offset
+            worksheet.cell(target_row, 1).value = row["Species"]
+            worksheet.cell(target_row, 2).value = row["Density (tree/rai)"]
+            worksheet.cell(target_row, 3).value = row["Frequency"]
+            worksheet.cell(target_row, 4).value = row["BA (m2)"]
+            worksheet.cell(target_row, 5).value = row["Dominance"]
+            worksheet.cell(target_row, 6).value = row["RDensity"]
+            worksheet.cell(target_row, 7).value = row["RFrequency"]
+            worksheet.cell(target_row, 8).value = row["RDominance"]
+            worksheet.cell(target_row, 9).value = row["IVI"]
+            worksheet.cell(target_row, 10).value = row["Shannon contribution"]
+
+    for idx, component_name in enumerate(component_names):
+        density_row = 6 + idx
+        volume_row = 15 + idx
+        biomass_row = 24 + idx
+        ivi_title_row = COMPONENT_IVI_START_ROWS[idx]
+
+        density_map = dbh_summary_map(component_name)
+        tq_map = tq_summary_map(component_name)
+        biomass_map = biomass_summary_map(component_name)
+
+        worksheet.cell(density_row, 1).value = component_name
+        worksheet.cell(density_row, 2).value = top_species_from_tree(component_name)
+        worksheet.cell(density_row, 3).value = density_map.get(("tree", "dbh 10-30"))
+        worksheet.cell(density_row, 4).value = density_map.get(("tree", "dbh 30-60"))
+        worksheet.cell(density_row, 5).value = density_map.get(("tree", "dbh > 60"))
+        worksheet.cell(density_row, 6).value = density_map.get(("tree", "total"))
+        worksheet.cell(density_row, 7).value = top_species_from_sapling(component_name)
+        worksheet.cell(density_row, 8).value = density_map.get(("sapling", "total"))
+        worksheet.cell(density_row, 9).value = top_species_from_seedling(component_name)
+        worksheet.cell(density_row, 10).value = density_map.get(("seedling", "count summary"))
+
+        worksheet.cell(volume_row, 1).value = component_name
+        worksheet.cell(volume_row, 2).value = tq_map.get("tq 1.1")
+        worksheet.cell(volume_row, 3).value = tq_map.get("tq 1.2")
+        worksheet.cell(volume_row, 4).value = tq_map.get("tq 1.3")
+        worksheet.cell(volume_row, 5).value = tq_map.get("tq 2")
+        worksheet.cell(volume_row, 6).value = tq_map.get("tq 3")
+        worksheet.cell(volume_row, 7).value = tq_map.get("total")
+
+        worksheet.cell(biomass_row, 1).value = component_name
+        worksheet.cell(biomass_row, 2).value = biomass_map.get("Ws_sum")
+        worksheet.cell(biomass_row, 3).value = biomass_map.get("Wb_sum")
+        worksheet.cell(biomass_row, 4).value = biomass_map.get("Wl_sum")
+        worksheet.cell(biomass_row, 5).value = biomass_map.get("Wr_sum")
+        worksheet.cell(biomass_row, 6).value = biomass_map.get("biomass_total_sum")
+
+        fill_ivi_block(component_name, ivi_title_row)
+
+    for idx in range(len(component_names), len(COMPONENT_IVI_START_ROWS)):
+        density_row = 6 + idx
+        volume_row = 15 + idx
+        biomass_row = 24 + idx
+        ivi_title_row = COMPONENT_IVI_START_ROWS[idx]
+        for col_idx in range(1, 11):
+            worksheet.cell(density_row, col_idx).value = None
+        for col_idx in range(1, 8):
+            worksheet.cell(volume_row, col_idx).value = None
+            worksheet.cell(biomass_row, col_idx).value = None
+        worksheet.cell(ivi_title_row, 2).value = None
+        for row_idx in range(ivi_title_row + 2, ivi_title_row + 7):
+            for col_idx in range(1, 11):
+                worksheet.cell(row_idx, col_idx).value = None
+
+    biomass_value_columns = [2, 3, 4, 5, 6]
+    for col_idx in biomass_value_columns:
+        values = []
+        for row_idx in range(24, 29):
+            value = worksheet.cell(row_idx, col_idx).value
+            if isinstance(value, (int, float)):
+                values.append(float(value))
+        worksheet.cell(29, col_idx).value = sum(values) if values else None
+
+    workbook.save(component_file)
 
 
 def write_combined_output_workbook(output_file: Path, sheets: dict[str, pd.DataFrame]) -> None:
