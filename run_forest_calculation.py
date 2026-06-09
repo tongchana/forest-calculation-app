@@ -1842,13 +1842,13 @@ def write_component_summary_workbook(component_file: Path, template_file: Path, 
         worksheet.cell(title_row, 2).value = component_name
         frame = build_ivi_summary(component_name, sheets)
         data_start_row = title_row + 2
-        data_end_row = title_row + 8
+        data_end_row = title_row + 11
         for row_idx in range(data_start_row, data_end_row + 1):
             for col_idx in range(1, 11):
                 worksheet.cell(row_idx, col_idx).value = None
         if frame.empty:
             return
-        top_rows = frame.head(5).reset_index(drop=True)
+        top_rows = frame.head(10).reset_index(drop=True)
         for offset, (_, row) in enumerate(top_rows.iterrows()):
             target_row = data_start_row + offset
             worksheet.cell(target_row, 1).value = row["Species"]
@@ -1926,7 +1926,7 @@ def write_component_summary_workbook(component_file: Path, template_file: Path, 
             worksheet.cell(belowground_row, col_idx).value = None
             worksheet.cell(carbon_row, col_idx).value = None
         worksheet.cell(ivi_title_row, 2).value = None
-        for row_idx in range(ivi_title_row + 2, ivi_title_row + 9):
+        for row_idx in range(ivi_title_row + 2, ivi_title_row + 12):
             for col_idx in range(1, 11):
                 worksheet.cell(row_idx, col_idx).value = None
 
