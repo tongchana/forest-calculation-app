@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 import tempfile
 import traceback
 from io import BytesIO
@@ -75,6 +77,28 @@ SORTABLE_STYLE = """
     font-weight: 600;
 }
 """
+
+
+@st.cache_data(show_spinner=False)
+def get_build_version() -> str:
+    for env_name in ("STREAMLIT_GIT_COMMIT", "GITHUB_SHA", "COMMIT_SHA", "RENDER_GIT_COMMIT"):
+        env_value = os.getenv(env_name, "").strip()
+        if env_value:
+            return env_value[:7]
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).resolve().parent,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+    build = result.stdout.strip()
+    return build or "unknown"
 
 
 def inject_css() -> None:
@@ -588,6 +612,9 @@ def main() -> None:
         <div class="hero-card">
             <h1 style="margin:0;">{APP_TITLE}</h1>
             <div class="hero-subtitle">{APP_SUBTITLE}</div>
+            <div class="hero-subtitle" style="font-size:0.9rem; opacity:0.78; margin-top:0.6rem;">
+                Build: {get_build_version()}
+            </div>
         </div>
         """,
         unsafe_allow_html=True,
