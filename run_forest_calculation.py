@@ -1876,23 +1876,45 @@ def write_component_summary_workbook(
         if ivi_title_row is None:
             return None
 
+        header_row = ivi_title_row + 1
+        header_map: dict[str, int] = {}
+        for col_idx in range(1, component_sheet.max_column + 1):
+            header_name = normalize_text(component_sheet.cell(header_row, col_idx).value)
+            if header_name:
+                header_map[header_name] = col_idx
+
+        required_headers = {
+            "Species": "Species",
+            "Density (tree/rai)": "Density (tree/rai)",
+            "Frequency": "Frequency",
+            "BA (m2)": "BA (m2)",
+            "Dominance": "Dominance",
+            "RDensity": "RDensity",
+            "RFrequency": "RFrequency",
+            "RDominance": "RDominance",
+            "IVI": "IVI",
+            "Shannon contribution": "Shannon contribution",
+        }
+        if any(header not in header_map for header in required_headers.values()):
+            return None
+
         rows: list[dict[str, object]] = []
         for row_idx in range(ivi_title_row + 2, component_sheet.max_row + 1):
-            species = component_sheet.cell(row_idx, 1).value
+            species = component_sheet.cell(row_idx, header_map["Species"]).value
             if species in (None, ""):
                 break
             rows.append(
                 {
                     "Species": species,
-                    "Density (tree/rai)": component_sheet.cell(row_idx, 4).value,
-                    "Frequency": component_sheet.cell(row_idx, 6).value,
-                    "BA (m2)": component_sheet.cell(row_idx, 8).value,
-                    "Dominance": component_sheet.cell(row_idx, 9).value,
-                    "RDensity": component_sheet.cell(row_idx, 10).value,
-                    "RFrequency": component_sheet.cell(row_idx, 11).value,
-                    "RDominance": component_sheet.cell(row_idx, 12).value,
-                    "IVI": component_sheet.cell(row_idx, 13).value,
-                    "Shannon contribution": component_sheet.cell(row_idx, 17).value,
+                    "Density (tree/rai)": component_sheet.cell(row_idx, header_map["Density (tree/rai)"]).value,
+                    "Frequency": component_sheet.cell(row_idx, header_map["Frequency"]).value,
+                    "BA (m2)": component_sheet.cell(row_idx, header_map["BA (m2)"]).value,
+                    "Dominance": component_sheet.cell(row_idx, header_map["Dominance"]).value,
+                    "RDensity": component_sheet.cell(row_idx, header_map["RDensity"]).value,
+                    "RFrequency": component_sheet.cell(row_idx, header_map["RFrequency"]).value,
+                    "RDominance": component_sheet.cell(row_idx, header_map["RDominance"]).value,
+                    "IVI": component_sheet.cell(row_idx, header_map["IVI"]).value,
+                    "Shannon contribution": component_sheet.cell(row_idx, header_map["Shannon contribution"]).value,
                 }
             )
             if len(rows) >= 10:
@@ -2060,6 +2082,27 @@ def rewrite_component_ivi_blocks_from_summary_file(component_file: Path, summary
         if summary_ivi_row is None:
             continue
 
+        header_row = summary_ivi_row + 1
+        header_map: dict[str, int] = {}
+        for col_idx in range(1, summary_sheet.max_column + 1):
+            header_name = normalize_text(summary_sheet.cell(header_row, col_idx).value)
+            if header_name:
+                header_map[header_name] = col_idx
+        required_headers = [
+            "Species",
+            "Density (tree/rai)",
+            "Frequency",
+            "BA (m2)",
+            "Dominance",
+            "RDensity",
+            "RFrequency",
+            "RDominance",
+            "IVI",
+            "Shannon contribution",
+        ]
+        if any(header not in header_map for header in required_headers):
+            continue
+
         data_start_row = start_row + 2
         data_end_row = start_row + 11
         for row_idx in range(data_start_row, data_end_row + 1):
@@ -2068,19 +2111,19 @@ def rewrite_component_ivi_blocks_from_summary_file(component_file: Path, summary
 
         target_row = data_start_row
         for row_idx in range(summary_ivi_row + 2, summary_sheet.max_row + 1):
-            species = summary_sheet.cell(row_idx, 1).value
+            species = summary_sheet.cell(row_idx, header_map["Species"]).value
             if species in (None, "") or target_row > data_end_row:
                 break
             component_sheet.cell(target_row, 1).value = species
-            component_sheet.cell(target_row, 2).value = summary_sheet.cell(row_idx, 4).value
-            component_sheet.cell(target_row, 3).value = summary_sheet.cell(row_idx, 6).value
-            component_sheet.cell(target_row, 4).value = summary_sheet.cell(row_idx, 8).value
-            component_sheet.cell(target_row, 5).value = summary_sheet.cell(row_idx, 9).value
-            component_sheet.cell(target_row, 6).value = summary_sheet.cell(row_idx, 10).value
-            component_sheet.cell(target_row, 7).value = summary_sheet.cell(row_idx, 11).value
-            component_sheet.cell(target_row, 8).value = summary_sheet.cell(row_idx, 12).value
-            component_sheet.cell(target_row, 9).value = summary_sheet.cell(row_idx, 13).value
-            component_sheet.cell(target_row, 10).value = summary_sheet.cell(row_idx, 17).value
+            component_sheet.cell(target_row, 2).value = summary_sheet.cell(row_idx, header_map["Density (tree/rai)"]).value
+            component_sheet.cell(target_row, 3).value = summary_sheet.cell(row_idx, header_map["Frequency"]).value
+            component_sheet.cell(target_row, 4).value = summary_sheet.cell(row_idx, header_map["BA (m2)"]).value
+            component_sheet.cell(target_row, 5).value = summary_sheet.cell(row_idx, header_map["Dominance"]).value
+            component_sheet.cell(target_row, 6).value = summary_sheet.cell(row_idx, header_map["RDensity"]).value
+            component_sheet.cell(target_row, 7).value = summary_sheet.cell(row_idx, header_map["RFrequency"]).value
+            component_sheet.cell(target_row, 8).value = summary_sheet.cell(row_idx, header_map["RDominance"]).value
+            component_sheet.cell(target_row, 9).value = summary_sheet.cell(row_idx, header_map["IVI"]).value
+            component_sheet.cell(target_row, 10).value = summary_sheet.cell(row_idx, header_map["Shannon contribution"]).value
             target_row += 1
 
     component_workbook.save(component_file)
