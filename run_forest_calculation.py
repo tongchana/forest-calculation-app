@@ -890,6 +890,13 @@ def get_tree_detail_for_site(source_sheet_name: str, sheets: dict[str, pd.DataFr
     return detail[(detail["sheet_name"] == source_sheet_name) & (detail["block_type"] == "Tree")].copy()
 
 
+def get_volume_detail_for_site(source_sheet_name: str, block_type: str, sheets: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    detail = sheets["DETAIL_VOLUME"]
+    if detail.empty:
+        return pd.DataFrame(columns=detail.columns)
+    return detail[(detail["sheet_name"] == source_sheet_name) & (detail["block_type"] == block_type)].copy()
+
+
 def build_ivi_summary(source_sheet_name: str, sheets: dict[str, pd.DataFrame]) -> pd.DataFrame:
     detail_ivi = sheets["DETAIL_IVI"]
     if detail_ivi.empty:
@@ -1063,54 +1070,96 @@ def build_dbh_class_summary(
     plot_area_ha: float,
     rai_per_hectare: float,
 ) -> pd.DataFrame:
-    tree_detail = get_tree_detail_for_site(source_sheet_name, sheets)
-    columns = ["DBH Class", "Total", "Average per plot", "Density per hectare", "Trees per rai"]
-    if tree_detail.empty:
-        return pd.DataFrame(columns=columns)
-
-    dbh = tree_detail["DBH_cm"]
-    n_plots = tree_detail["Plot"].astype(str).str.strip().replace("", np.nan).dropna().nunique()
-    total_area_ha = n_plots * plot_area_ha
-    total_area_rai = total_area_ha * rai_per_hectare if pd.notna(total_area_ha) else np.nan
-
-    class_specs = [
-        ("dbh 10-30", (dbh >= 10) & (dbh < 30)),
-        ("dbh 30-60", (dbh >= 30) & (dbh <= 60)),
-        ("dbh > 60", dbh > 60),
-    ]
+    columns = ["Block", "DBH Class", "Total", "Average per plot", "Density per hectare", "Per rai"]
     rows: list[dict[str, object]] = []
-    total_count = 0
-    total_avg_plot = 0.0
-    total_density_ha = 0.0
-    total_per_rai = 0.0
-    for label, mask in class_specs:
-        n_class = int(mask.fillna(False).sum())
-        avg_plot = safe_divide(n_class, n_plots)
-        density_ha = safe_divide(n_class, total_area_ha)
-        per_rai = safe_divide(n_class, total_area_rai)
+
+    def append_class_rows(
+        block_label: str,
+        frame: pd.DataFrame,
+        value_column: str | None,
+    ) -> None:
+        if frame.empty:
+            return
+
+        dbh = pd.to_numeric(frame["DBH_cm"], errors="coerce")
+        n_plots = frame["Plot"].astype(str).str.strip().replace("", np.nan).dropna().nunique()
+        total_area_ha = n_plots * plot_area_ha
+        total_area_rai = total_area_ha * rai_per_hectare if pd.notna(total_area_ha) else np.nan
+        weights = (
+            pd.to_numeric(frame[value_column], errors="coerce").fillna(0)
+            if value_column is not None and value_column in frame.columns
+            else pd.Series(1, index=frame.index, dtype=float)
+        )
+
+        class_specs = [
+            ("dbh 10-30", (dbh >= 10) & (dbh < 30)),
+            ("dbh 30-60", (dbh >= 30) & (dbh <= 60)),
+            ("dbh > 60", dbh > 60),
+        ]
+
+        total_count = 0.0
+        total_avg_plot = 0.0
+        total_density_ha = 0.0
+        total_per_rai = 0.0
+        for label, mask in class_specs:
+            mask = mask.fillna(False)
+            n_class = float(weights[mask].sum())
+            avg_plot = safe_divide(n_class, n_plots)
+            density_ha = safe_divide(n_class, total_area_ha)
+            per_rai = safe_divide(n_class, total_area_rai)
+            rows.append(
+                {
+                    "Block": block_label,
+                    "DBH Class": label,
+                    "Total": n_class,
+                    "Average per plot": avg_plot,
+                    "Density per hectare": density_ha,
+                    "Per rai": per_rai,
+                }
+            )
+            total_count += n_class
+            total_avg_plot += avg_plot if isinstance(avg_plot, (int, float)) else 0.0
+            total_density_ha += density_ha if isinstance(density_ha, (int, float)) else 0.0
+            total_per_rai += per_rai if isinstance(per_rai, (int, float)) else 0.0
+
         rows.append(
             {
-                "DBH Class": label,
-                "Total": n_class,
-                "Average per plot": avg_plot,
-                "Density per hectare": density_ha,
-                "Trees per rai": per_rai,
+                "Block": block_label,
+                "DBH Class": "Total",
+                "Total": total_count,
+                "Average per plot": total_avg_plot if n_plots else "-",
+                "Density per hectare": total_density_ha if total_area_ha else "-",
+                "Per rai": total_per_rai if total_area_rai else "-",
             }
         )
-        total_count += n_class
-        total_avg_plot += avg_plot if isinstance(avg_plot, (int, float)) else 0.0
-        total_density_ha += density_ha if isinstance(density_ha, (int, float)) else 0.0
-        total_per_rai += per_rai if isinstance(per_rai, (int, float)) else 0.0
 
-    rows.append(
-        {
-            "DBH Class": "Total",
-            "Total": total_count,
-            "Average per plot": total_avg_plot if n_plots else "-",
-            "Density per hectare": total_density_ha if total_area_ha else "-",
-            "Trees per rai": total_per_rai if total_area_rai else "-",
-        }
-    )
+    tree_detail = get_volume_detail_for_site(source_sheet_name, "Tree", sheets)
+    append_class_rows("Tree", tree_detail, None)
+
+    sapling_detail = get_volume_detail_for_site(source_sheet_name, "Sapling", sheets)
+    append_class_rows("Sapling", sapling_detail, "Number")
+
+    seedling_detail = sheets["DETAIL_SEEDLING"]
+    if not seedling_detail.empty:
+        seedling_detail = seedling_detail[seedling_detail["sheet_name"] == source_sheet_name].copy()
+    if not seedling_detail.empty:
+        n_plots = seedling_detail["Plot"].astype(str).str.strip().replace("", np.nan).dropna().nunique()
+        total_area_ha = n_plots * plot_area_ha
+        total_area_rai = total_area_ha * rai_per_hectare if pd.notna(total_area_ha) else np.nan
+        total_seedling = float(pd.to_numeric(seedling_detail["Number"], errors="coerce").fillna(0).sum())
+        rows.append(
+            {
+                "Block": "Seedling",
+                "DBH Class": "count summary",
+                "Total": total_seedling,
+                "Average per plot": safe_divide(total_seedling, n_plots),
+                "Density per hectare": safe_divide(total_seedling, total_area_ha),
+                "Per rai": safe_divide(total_seedling, total_area_rai),
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame(columns=columns)
     return pd.DataFrame(rows, columns=columns)
 
 
