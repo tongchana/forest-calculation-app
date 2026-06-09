@@ -706,7 +706,13 @@ def build_volume_outputs(tree_df: pd.DataFrame, sapling_df: pd.DataFrame, ref_ma
             ref = ref_map.get(species_norm) if species_norm else None
             dbh_cm = get_dbh_cm(row.get("DBH (cm)"), row.get("Girth (cm)"))
             group_id = ref["group_id"] if ref else np.nan
-            volume_m3 = calculate_volume_from_dbh(dbh_cm, group_id) if ref else np.nan
+            per_stem_volume_m3 = calculate_volume_from_dbh(dbh_cm, group_id) if ref else np.nan
+            if block_type == "Sapling":
+                raw_number = pd.to_numeric(pd.Series([row.get("Number")]), errors="coerce").iloc[0]
+                multiplier = float(raw_number) if pd.notna(raw_number) and float(raw_number) > 0 else 1.0
+                volume_m3 = per_stem_volume_m3 * multiplier if pd.notna(per_stem_volume_m3) else np.nan
+            else:
+                volume_m3 = per_stem_volume_m3
             detail_records.append(
                 {
                     "sheet_name": row["sheet_name"],
@@ -814,6 +820,7 @@ def build_ivi_outputs(tree_df: pd.DataFrame, plot_area_ha: float, rai_per_hectar
     working = working[working["Species"].astype(str).str.strip().ne("") & working["Plot"].ne("") & working["DBH_cm"].notna()].copy()
     if working.empty:
         return pd.DataFrame(columns=detail_columns), pd.DataFrame(columns=summary_columns)
+    working["Tree_BA_m2"] = PI * ((working["DBH_cm"] / 100.0) ** 2) / 4.0
 
     detail_frames: list[pd.DataFrame] = []
     summary_rows: list[dict[str, object]] = []
@@ -822,6 +829,7 @@ def build_ivi_outputs(tree_df: pd.DataFrame, plot_area_ha: float, rai_per_hectar
         if total_plots == 0:
             LOG.warning("Sheet '%s' has no valid plot values for IVI calculation.", sheet_name)
             continue
+        total_sampled_area_ha = total_plots * plot_area_ha
 
         species_summary = (
             group.groupby("Species", sort=True)
@@ -829,18 +837,17 @@ def build_ivi_outputs(tree_df: pd.DataFrame, plot_area_ha: float, rai_per_hectar
                 **{
                     "Number of tree": ("Species", "size"),
                     "Plot": ("Plot", "nunique"),
-                    "DBH_sum_cm": ("DBH_cm", "sum"),
+                    "BA (m2)": ("Tree_BA_m2", "sum"),
                 }
             )
             .reset_index()
         )
         species_summary["sheet_name"] = sheet_name
-        species_summary["Density (tree/ha)"] = species_summary["Number of tree"] / (species_summary["Plot"] * plot_area_ha)
+        species_summary["Density (tree/ha)"] = species_summary["Number of tree"] / total_sampled_area_ha
         species_summary["Density (tree/rai)"] = species_summary["Density (tree/ha)"] / rai_per_hectare
-        species_summary["Frequency"] = species_summary["Plot"] / species_summary["Plot"].sum() * 100
-        species_summary["DBH (m)"] = species_summary["DBH_sum_cm"] / 100
-        species_summary["BA (m2)"] = ((species_summary["DBH (m)"] ** 2) / 4) * PI
-        species_summary["Dominance"] = species_summary["BA (m2)"] / total_plots
+        species_summary["Frequency"] = species_summary["Plot"] / total_plots * 100
+        species_summary["DBH (m)"] = np.nan
+        species_summary["Dominance"] = species_summary["BA (m2)"] / total_sampled_area_ha
         species_summary["RDensity"] = species_summary["Density (tree/rai)"] / species_summary["Density (tree/rai)"].sum() * 100
         species_summary["RFrequency"] = species_summary["Frequency"] / species_summary["Frequency"].sum() * 100
         species_summary["RDominance"] = species_summary["Dominance"] / species_summary["Dominance"].sum() * 100
@@ -1230,9 +1237,9 @@ def build_summary_all(
     volume_summary: pd.DataFrame,
     shannon_summary: pd.DataFrame,
     unmatched_df: pd.DataFrame,
+    plot_area_ha: float = PLOT_AREA_HA,
+    rai_per_hectare: float = RAI_PER_HECTARE,
 ) -> pd.DataFrame:
-    plot_area_ha = PLOT_AREA_HA
-    rai_per_hectare = RAI_PER_HECTARE
     sheet_names = sorted(
         {
             *tree_df.get("sheet_name", pd.Series(dtype=object)).dropna().astype(str).tolist(),
@@ -1594,6 +1601,8 @@ def process_workbook(
         volume_summary,
         shannon_summary,
         unmatched_species,
+        plot_area_ha=plot_area_ha,
+        rai_per_hectare=rai_per_hectare,
     )
 
     outputs = ensure_output_frames(
