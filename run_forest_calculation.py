@@ -1711,6 +1711,7 @@ def write_component_summary_workbook(component_file: Path, template_file: Path, 
     workbook = load_workbook(template_file)
     worksheet = workbook[workbook.sheetnames[0]]
     worksheet["C5"] = "10-30"
+    worksheet["E23"] = "ส่วนของราก (Wr)"
 
     plot_area_ha = sheets["__meta__"]["plot_area_ha"]
     rai_per_hectare = sheets["__meta__"]["rai_per_hectare"]
