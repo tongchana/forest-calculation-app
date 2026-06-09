@@ -41,16 +41,18 @@ DEFAULT_GROUP_LABEL = "Component"
 MAX_COMPONENTS = 5
 SORTABLE_STYLE = """
 .sortable-component {
-    border: 1px solid rgba(36, 92, 63, 0.12);
+    border: none;
     border-radius: 18px;
-    padding: 0.75rem;
-    background: #f8fcf9;
+    padding: 0;
+    background: transparent;
 }
 .sortable-container {
-    background: white;
+    background: #e8f2ec;
     border-radius: 14px;
     border: 1px solid rgba(36, 92, 63, 0.10);
-    min-height: 240px;
+    min-height: 86px;
+    box-shadow: none;
+    overflow: hidden;
 }
 .sortable-container-header {
     background: #e8f2ec;
@@ -61,6 +63,8 @@ SORTABLE_STYLE = """
 }
 .sortable-container-body {
     padding: 0.65rem;
+    min-height: 56px;
+    background: #e8f2ec;
 }
 .sortable-item, .sortable-item:hover {
     background: linear-gradient(135deg, #f4fbf6 0%, #ebf6ef 100%);
