@@ -258,6 +258,8 @@ def calculate_tree_biomass(dbh_cm: float, height_m: float, forest_type: str) -> 
 
     d = float(dbh_cm)
     h = float(height_m)
+    if d <= 0 or h <= 0:
+        return {"Ws": np.nan, "Wb": np.nan, "Wl": np.nan, "Wr": np.nan, "biomass_total": np.nan}
     ws = wb = wl = wr = np.nan
 
     if forest_type in {"ป่าดิบแล้ง", "ป่าดิบเขา"}:
@@ -269,12 +271,12 @@ def calculate_tree_biomass(dbh_cm: float, height_m: float, forest_type: str) -> 
         ws = 0.0396 * (d**2) * (h**0.9326)
         wb = 0.003487 * (d**2) * (h**1.0270)
         wtc = ws + wb
-        wl = (28 / wtc + 0.0250) ** (-1)
+        wl = (28 / wtc + 0.0250) ** (-1) if wtc > 0 else np.nan
     elif forest_type == "ป่าดิบชื้น":
         ws = 0.0396 * (d**2) * (h**0.9326)
         wb = 0.006002 * (d**2) * (h**1.0270)
         wtc = ws + wb
-        wl = (18 / wtc + 0.0250) ** (-1)
+        wl = (18 / wtc + 0.0250) ** (-1) if wtc > 0 else np.nan
         wr = 0.0264 * (d**2) * (h**0.7750)
     elif forest_type == "ป่าสนเขา(สนสองใบ)":
         ws = 0.02141 * (d**2) * (h**0.9814)
