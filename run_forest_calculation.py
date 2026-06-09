@@ -1755,19 +1755,28 @@ def write_component_summary_workbook(component_file: Path, template_file: Path, 
         return result
 
     def block_density_per_rai(component_name: str, block_name: str) -> object:
-        summary_all = sheets["SUMMARY_ALL"]
-        if summary_all.empty:
-            return None
-        working = summary_all[summary_all["sheet_name"] == component_name]
-        if working.empty:
-            return None
-        row = working.iloc[0]
         block_key = block_name.lower()
+
         if block_key == "sapling":
-            return row.get("sapling_per_rai")
-        if block_key == "seedling":
-            return row.get("seedling_per_rai")
-        return None
+            frame = get_volume_detail_for_site(component_name, "Sapling", sheets)
+            if frame.empty:
+                return None
+            total_number = pd.to_numeric(frame["Number"], errors="coerce").fillna(0).sum()
+            plot_count = frame["Plot"].astype(str).str.strip().replace("", np.nan).dropna().nunique()
+        elif block_key == "seedling":
+            frame = sheets["DETAIL_SEEDLING"]
+            if frame.empty:
+                return None
+            frame = frame[frame["sheet_name"] == component_name].copy()
+            if frame.empty:
+                return None
+            total_number = pd.to_numeric(frame["Number"], errors="coerce").fillna(0).sum()
+            plot_count = frame["Plot"].astype(str).str.strip().replace("", np.nan).dropna().nunique()
+        else:
+            return None
+
+        total_area_rai = plot_count * plot_area_ha * rai_per_hectare if plot_count else np.nan
+        return safe_divide(total_number, total_area_rai)
 
     def biomass_summary_map(component_name: str) -> dict[str, object]:
         frame = sheets["SUMMARY_BIOMASS"]
