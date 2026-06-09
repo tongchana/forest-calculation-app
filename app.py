@@ -288,6 +288,22 @@ def remove_sheet_group(reference_order: list[str]) -> None:
     bump_sheet_group_sortable_version()
 
 
+def move_selected_sheets_to_group(selected_sheet_names: list[str], target_group_index: int, reference_order: list[str]) -> None:
+    selected = [sheet_name for sheet_name in selected_sheet_names if sheet_name in reference_order]
+    containers = st.session_state.sheet_group_containers
+    if not selected or target_group_index <= 0 or target_group_index >= len(containers):
+        return
+
+    selected_set = set(selected)
+    for container in containers:
+        container["items"] = [item for item in container["items"] if item not in selected_set]
+
+    target_items = containers[target_group_index]["items"] + selected
+    containers[target_group_index]["items"] = order_items_by_reference(target_items, reference_order)
+    containers[0]["items"] = order_items_by_reference(containers[0]["items"], reference_order)
+    bump_sheet_group_sortable_version()
+
+
 def normalize_sortable_containers(
     containers: list[dict[str, list[str] | str]],
     sheet_names: list[str],
@@ -411,6 +427,57 @@ def render_sheet_group_builder(sheet_names: list[str]) -> list[dict[str, list[st
                 st.warning(f"Please enter a name for {DEFAULT_GROUP_LABEL.lower()} {idx} before calculation.")
                 continue
             groups.append({"name": group_name, "sheet_names": group_items})
+
+        st.markdown(
+            """
+            <div class="step-card">
+                <div class="step-title">Move multiple worksheets at once</div>
+                <div>
+                    Native Ctrl/Cmd multi-drag is not supported reliably by the current drag-and-drop widget.
+                    Use the controls below to move many worksheets into one component in a single action.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        bulk_col1, bulk_col2, bulk_col3 = st.columns([2.3, 1.2, 0.9])
+        with bulk_col1:
+            bulk_selected = st.multiselect(
+                "Select worksheets to move",
+                options=st.session_state.sheet_group_containers[0]["items"],
+                key="bulk_move_sheet_names",
+                placeholder="Choose one or more worksheets from Available sheets",
+            )
+        with bulk_col2:
+            target_options = {
+                f"Component {idx}: {(st.session_state.get(f'sheet_group_name_{idx}') or container['header']).strip()}": idx
+                for idx, container in enumerate(st.session_state.sheet_group_containers[1:], start=1)
+            }
+            if target_options:
+                target_label = st.selectbox(
+                    "Move to component",
+                    options=list(target_options.keys()),
+                    key="bulk_move_target_label",
+                )
+            else:
+                target_label = None
+                st.selectbox(
+                    "Move to component",
+                    options=["No component available"],
+                    key="bulk_move_target_label_disabled",
+                    disabled=True,
+                )
+        with bulk_col3:
+            st.write("")
+            st.write("")
+            if st.button(
+                "Move selected",
+                use_container_width=True,
+                disabled=not bulk_selected or not target_options,
+            ):
+                move_selected_sheets_to_group(bulk_selected, target_options[target_label], sheet_names)
+                st.session_state.bulk_move_sheet_names = []
+                st.rerun()
 
     if groups:
         preview_rows = [{"Component name": group["name"], "Sheets": ", ".join(group["sheet_names"])} for group in groups]

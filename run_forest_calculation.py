@@ -1653,10 +1653,11 @@ def write_section_table(worksheet, start_row: int, title: str, frame: pd.DataFra
 def write_summary_by_site_workbook(summary_file: Path, sheets: dict[str, pd.DataFrame]) -> None:
     source_names = sheets["SUMMARY_ALL"].get("sheet_name", pd.Series(dtype=object)).dropna().astype(str).tolist()
     component_names = get_component_sheet_names(sheets)
+    ordered_component_names = get_component_group_names_in_order(sheets)
     unique_source_names = list(dict.fromkeys(source_names))
-    source_names = [name for name in unique_source_names if name not in component_names] + [
-        name for name in unique_source_names if name in component_names
-    ]
+    component_source_names = [name for name in ordered_component_names if name in unique_source_names]
+    non_component_source_names = [name for name in unique_source_names if name not in component_names]
+    source_names = component_source_names + non_component_source_names
 
     with pd.ExcelWriter(summary_file, engine="openpyxl") as writer:
         if not source_names:
