@@ -36,6 +36,7 @@ PREVIEW_SHEETS = [
     "CHECK_UNMATCHED_SPECIES",
 ]
 DEFAULT_GROUP_LABEL = "Component"
+MAX_COMPONENTS = 5
 SORTABLE_STYLE = """
 .sortable-component {
     border: 1px solid rgba(36, 92, 63, 0.12);
@@ -232,6 +233,8 @@ def ensure_sheet_group_state(sheet_names: list[str]) -> None:
 
 def add_sheet_group() -> None:
     containers = st.session_state.sheet_group_containers
+    if len(containers) - 1 >= MAX_COMPONENTS:
+        return
     next_index = len(containers)
     containers.append(make_group_container(next_index))
     st.session_state.sheet_group_name_count = next_index
@@ -284,7 +287,12 @@ def render_sheet_group_builder(sheet_names: list[str]) -> list[dict[str, list[st
 
     action_col1, action_col2 = st.columns([1, 1])
     with action_col1:
-        st.button("Add component", on_click=add_sheet_group, use_container_width=True)
+        st.button(
+            "Add component",
+            on_click=add_sheet_group,
+            disabled=len(st.session_state.sheet_group_containers) - 1 >= MAX_COMPONENTS,
+            use_container_width=True,
+        )
     with action_col2:
         st.button(
             "Remove last component",
@@ -295,6 +303,7 @@ def render_sheet_group_builder(sheet_names: list[str]) -> list[dict[str, list[st
         )
 
     group_count = len(st.session_state.sheet_group_containers) - 1
+    st.caption(f"You can create up to {MAX_COMPONENTS} components.")
     for idx in range(1, group_count + 1):
         group_key = f"sheet_group_name_{idx}"
         if group_key not in st.session_state:

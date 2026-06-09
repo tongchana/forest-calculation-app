@@ -477,6 +477,22 @@ def append_grouped_records(frame: pd.DataFrame, sheet_groups: list[dict[str, lis
     return pd.concat(grouped_frames, ignore_index=True)
 
 
+def get_component_sheet_names(sheets: dict[str, pd.DataFrame]) -> set[str]:
+    meta = sheets.get("__meta__", {})
+    raw_groups = meta.get("sheet_groups", []) if isinstance(meta, dict) else []
+    return {
+        normalize_text(group.get("name"))
+        for group in raw_groups
+        if normalize_text(group.get("name"))
+    }
+
+
+def filter_out_component_rows(frame: pd.DataFrame, component_names: set[str]) -> pd.DataFrame:
+    if frame.empty or not component_names or "sheet_name" not in frame.columns:
+        return frame
+    return frame[~frame["sheet_name"].astype(str).isin(component_names)].copy()
+
+
 def load_master_reference(master_file: Path) -> dict[str, dict[str, object]]:
     xls = pd.ExcelFile(master_file)
     taxon_df = pd.read_excel(master_file, sheet_name="taxon_master") if "taxon_master" in xls.sheet_names else pd.DataFrame()
@@ -1547,6 +1563,11 @@ def write_section_table(worksheet, start_row: int, title: str, frame: pd.DataFra
 
 def write_summary_by_site_workbook(summary_file: Path, sheets: dict[str, pd.DataFrame]) -> None:
     source_names = sheets["SUMMARY_ALL"].get("sheet_name", pd.Series(dtype=object)).dropna().astype(str).tolist()
+    component_names = get_component_sheet_names(sheets)
+    unique_source_names = list(dict.fromkeys(source_names))
+    source_names = [name for name in unique_source_names if name not in component_names] + [
+        name for name in unique_source_names if name in component_names
+    ]
 
     with pd.ExcelWriter(summary_file, engine="openpyxl") as writer:
         if not source_names:
@@ -1597,9 +1618,11 @@ def write_summary_by_site_workbook(summary_file: Path, sheets: dict[str, pd.Data
 
 
 def write_detail_workbook(detail_file: Path, sheets: dict[str, pd.DataFrame]) -> None:
+    component_names = get_component_sheet_names(sheets)
     with pd.ExcelWriter(detail_file, engine="openpyxl") as writer:
         for sheet_name in DETAIL_WORKBOOK_SHEETS:
-            sheets[sheet_name].to_excel(writer, sheet_name=sheet_name, index=False)
+            frame = filter_out_component_rows(sheets[sheet_name], component_names)
+            frame.to_excel(writer, sheet_name=sheet_name, index=False)
 
     workbook = load_workbook(detail_file)
     for sheet_name in DETAIL_WORKBOOK_SHEETS:
