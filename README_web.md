@@ -11,7 +11,7 @@ This Streamlit app wraps the existing forest calculation workflow and provides a
 5. Previewing key summary results
 6. Downloading the calculated Excel output
 7. Optionally combining multiple worksheets into named components before calculation
-8. Optionally downloading a populated `summary_component.xlsx` for component-level reporting
+8. Optionally downloading a populated `forest_component_7.xlsx`-based workbook for component-level reporting
 
 ## Required files
 

@@ -131,7 +131,7 @@ DETAIL_WORKBOOK_SHEETS = [
     "DETAIL_BAMBOO",
     "CHECK_UNMATCHED_SPECIES",
 ]
-COMPONENT_IVI_START_ROWS = [31, 39, 47, 55, 63]
+COMPONENT_IVI_START_ROWS = [61, 74, 87, 100, 113, 126, 139]
 
 SUMMARY_SECTION_SPECS = [
     ("Overall Summary", "SUMMARY_ALL"),
@@ -1711,7 +1711,7 @@ def write_component_summary_workbook(component_file: Path, template_file: Path, 
     workbook = load_workbook(template_file)
     worksheet = workbook[workbook.sheetnames[0]]
     worksheet["C5"] = "10-30"
-    worksheet["E23"] = "ส่วนของราก (Wr)"
+    worksheet["E27"] = "ส่วนของราก (Wr)"
 
     plot_area_ha = sheets["__meta__"]["plot_area_ha"]
     rai_per_hectare = sheets["__meta__"]["rai_per_hectare"]
@@ -1797,11 +1797,50 @@ def write_component_summary_workbook(component_file: Path, template_file: Path, 
             "biomass_total_sum": working["biomass_total_sum"].sum(),
         }
 
+    def belowground_biomass_total(component_name: str) -> float | None:
+        detail = sheets["DETAIL_TREE_BIOMASS"]
+        if detail.empty:
+            return None
+        working = detail[detail["sheet_name"] == component_name].copy()
+        if working.empty:
+            return None
+
+        working["Ws"] = pd.to_numeric(working["Ws"], errors="coerce")
+        working["Wb"] = pd.to_numeric(working["Wb"], errors="coerce")
+        working["Wl"] = pd.to_numeric(working["Wl"], errors="coerce")
+        working["Wr"] = pd.to_numeric(working["Wr"], errors="coerce")
+        working["aboveground"] = working[["Ws", "Wb", "Wl"]].fillna(0).sum(axis=1)
+
+        wr_available = working["Wr"].notna()
+        wr_sum = working.loc[wr_available, "Wr"].sum()
+        fallback_aboveground = working.loc[~wr_available, "aboveground"].sum()
+
+        if fallback_aboveground <= 0:
+            return float(wr_sum) if pd.notna(wr_sum) else None
+
+        plot_count = working["Plot"].astype(str).str.strip().replace("", np.nan).dropna().nunique()
+        total_area_ha = plot_count * plot_area_ha if plot_count else np.nan
+        fallback_agb_t_ha = ((fallback_aboveground / 1000.0) / total_area_ha) if total_area_ha not in (0, None) and pd.notna(total_area_ha) else np.nan
+        ratio = 0.2 if pd.notna(fallback_agb_t_ha) and fallback_agb_t_ha < 125 else 0.24
+        fallback_bgb = fallback_aboveground * ratio
+        return float(wr_sum + fallback_bgb)
+
+    def carbon_stock_total(component_name: str, belowground_total: float | None) -> float | None:
+        biomass_map = biomass_summary_map(component_name)
+        if not biomass_map:
+            return None
+        aboveground_total = sum(
+            float(biomass_map.get(key) or 0)
+            for key in ("Ws_sum", "Wb_sum", "Wl_sum")
+        )
+        belowground_value = float(belowground_total or 0)
+        return (aboveground_total + belowground_value) * 0.47
+
     def fill_ivi_block(component_name: str, title_row: int) -> None:
         worksheet.cell(title_row, 2).value = component_name
         frame = build_ivi_summary(component_name, sheets)
         data_start_row = title_row + 2
-        data_end_row = title_row + 6
+        data_end_row = title_row + 8
         for row_idx in range(data_start_row, data_end_row + 1):
             for col_idx in range(1, 11):
                 worksheet.cell(row_idx, col_idx).value = None
@@ -1823,13 +1862,17 @@ def write_component_summary_workbook(component_file: Path, template_file: Path, 
 
     for idx, component_name in enumerate(component_names):
         density_row = 6 + idx
-        volume_row = 15 + idx
-        biomass_row = 24 + idx
+        volume_row = 17 + idx
+        biomass_row = 28 + idx
+        belowground_row = 40 + idx
+        carbon_row = 52 + idx
         ivi_title_row = COMPONENT_IVI_START_ROWS[idx]
 
         density_map = dbh_summary_map(component_name)
         tq_map = tq_summary_map(component_name)
         biomass_map = biomass_summary_map(component_name)
+        belowground_total = belowground_biomass_total(component_name)
+        carbon_total = carbon_stock_total(component_name, belowground_total)
 
         worksheet.cell(density_row, 1).value = component_name
         worksheet.cell(density_row, 2).value = species_count_from_tree(component_name)
@@ -1857,31 +1900,56 @@ def write_component_summary_workbook(component_file: Path, template_file: Path, 
         worksheet.cell(biomass_row, 5).value = biomass_map.get("Wr_sum")
         worksheet.cell(biomass_row, 6).value = biomass_map.get("biomass_total_sum")
 
+        worksheet.cell(belowground_row, 1).value = component_name
+        worksheet.cell(belowground_row, 2).value = belowground_total
+
+        worksheet.cell(carbon_row, 1).value = component_name
+        worksheet.cell(carbon_row, 2).value = carbon_total
+
         fill_ivi_block(component_name, ivi_title_row)
 
     for idx in range(len(component_names), len(COMPONENT_IVI_START_ROWS)):
         density_row = 6 + idx
-        volume_row = 15 + idx
-        biomass_row = 24 + idx
+        volume_row = 17 + idx
+        biomass_row = 28 + idx
+        belowground_row = 40 + idx
+        carbon_row = 52 + idx
         ivi_title_row = COMPONENT_IVI_START_ROWS[idx]
         for col_idx in range(1, 11):
             worksheet.cell(density_row, col_idx).value = None
         for col_idx in range(1, 8):
             worksheet.cell(volume_row, col_idx).value = None
             worksheet.cell(biomass_row, col_idx).value = None
+        for col_idx in range(1, 3):
+            worksheet.cell(belowground_row, col_idx).value = None
+            worksheet.cell(carbon_row, col_idx).value = None
         worksheet.cell(ivi_title_row, 2).value = None
-        for row_idx in range(ivi_title_row + 2, ivi_title_row + 7):
+        for row_idx in range(ivi_title_row + 2, ivi_title_row + 9):
             for col_idx in range(1, 11):
                 worksheet.cell(row_idx, col_idx).value = None
 
     biomass_value_columns = [2, 3, 4, 5, 6]
     for col_idx in biomass_value_columns:
         values = []
-        for row_idx in range(24, 29):
+        for row_idx in range(28, 35):
             value = worksheet.cell(row_idx, col_idx).value
             if isinstance(value, (int, float)):
                 values.append(float(value))
-        worksheet.cell(29, col_idx).value = sum(values) if values else None
+        worksheet.cell(35, col_idx).value = sum(values) if values else None
+
+    belowground_values = []
+    for row_idx in range(40, 47):
+        value = worksheet.cell(row_idx, 2).value
+        if isinstance(value, (int, float)):
+            belowground_values.append(float(value))
+    worksheet.cell(47, 2).value = sum(belowground_values) if belowground_values else None
+
+    carbon_values = []
+    for row_idx in range(52, 59):
+        value = worksheet.cell(row_idx, 2).value
+        if isinstance(value, (int, float)):
+            carbon_values.append(float(value))
+    worksheet.cell(59, 2).value = sum(carbon_values) if carbon_values else None
 
     workbook.save(component_file)
 

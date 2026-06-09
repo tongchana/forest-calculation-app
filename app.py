@@ -25,7 +25,7 @@ PLOT_AREA_HA = calc.PLOT_AREA_HA
 RAI_PER_HECTARE = calc.RAI_PER_HECTARE
 TEMPLATE_FILE = Path("template.xlsx")
 MASTER_FILE = Path("species_reference_master_v1.xlsx")
-COMPONENT_TEMPLATE_FILE = Path("summary_component.xlsx")
+COMPONENT_TEMPLATE_FILE = Path("forest_component_7.xlsx")
 OUTPUT_BASE_FILENAME = "forest_calculation_output.xlsx"
 SUMMARY_OUTPUT_FILENAME = "forest_calculation_output_summary_by_site.xlsx"
 DETAIL_OUTPUT_FILENAME = "forest_calculation_output_details.xlsx"
@@ -38,7 +38,7 @@ PREVIEW_SHEETS = [
     "CHECK_UNMATCHED_SPECIES",
 ]
 DEFAULT_GROUP_LABEL = "Component"
-MAX_COMPONENTS = 5
+MAX_COMPONENTS = 7
 SORTABLE_STYLE = """
 .sortable-component {
     border: none;
@@ -626,7 +626,7 @@ def main() -> None:
             if uploaded_sheet_names:
                 selected_sheet_groups = render_sheet_group_builder(uploaded_sheet_names)
     if selected_sheet_groups and not COMPONENT_TEMPLATE_FILE.exists():
-        st.warning("The component summary template file 'summary_component.xlsx' is missing, so the extra component-summary download will not be available.")
+        st.warning("The component summary template file 'forest_component_7.xlsx' is missing, so the extra component-summary download will not be available.")
 
     st.markdown('<div class="section-label">Step 3</div>', unsafe_allow_html=True)
     render_card("Calculate", "Run the existing Python calculation workflow using the uploaded workbook and the default species master file.")
