@@ -304,6 +304,35 @@ def move_selected_sheets_to_group(selected_sheet_names: list[str], target_group_
     bump_sheet_group_sortable_version()
 
 
+def move_selected_sheets_between_containers(
+    selected_sheet_names: list[str],
+    source_container_index: int,
+    target_container_index: int,
+    reference_order: list[str],
+) -> None:
+    containers = st.session_state.sheet_group_containers
+    if (
+        source_container_index < 0
+        or target_container_index < 0
+        or source_container_index >= len(containers)
+        or target_container_index >= len(containers)
+        or source_container_index == target_container_index
+    ):
+        return
+
+    source_items = containers[source_container_index]["items"]
+    selected = [sheet_name for sheet_name in selected_sheet_names if sheet_name in source_items and sheet_name in reference_order]
+    if not selected:
+        return
+
+    selected_set = set(selected)
+    containers[source_container_index]["items"] = [item for item in source_items if item not in selected_set]
+    target_items = containers[target_container_index]["items"] + selected
+    containers[target_container_index]["items"] = order_items_by_reference(target_items, reference_order)
+    containers[0]["items"] = order_items_by_reference(containers[0]["items"], reference_order)
+    bump_sheet_group_sortable_version()
+
+
 def normalize_sortable_containers(
     containers: list[dict[str, list[str] | str]],
     sheet_names: list[str],
@@ -365,13 +394,14 @@ def render_sheet_group_builder(sheet_names: list[str]) -> list[dict[str, list[st
 
     groups: list[dict[str, list[str]]] = []
 
-    builder_mode = "Drag and drop"
+    builder_mode = "Batch move"
     if sort_items is not None:
         builder_mode = st.radio(
             "Component builder mode",
-            options=["Drag and drop", "Simple selection"],
+            options=["Batch move", "Drag and drop", "Simple selection"],
+            index=0,
             horizontal=True,
-            help="Drag and drop is the default workflow. Switch to Simple selection if your browser or device has trouble with dragging.",
+            help="Batch move is the fastest way to assign many worksheets at once. Drag and drop and Simple selection are still available if you prefer them.",
         )
 
     if builder_mode == "Simple selection":
@@ -408,6 +438,103 @@ def render_sheet_group_builder(sheet_names: list[str]) -> list[dict[str, list[st
             st.caption(f"Still ungrouped: {', '.join(remaining_sheets)}")
         else:
             st.caption("All worksheets have been assigned to components.")
+    elif builder_mode == "Batch move":
+        st.markdown(
+            """
+            <div class="step-card">
+                <div class="step-title">Batch move worksheets</div>
+                <div>
+                    Select one source list, choose multiple worksheets, then move them to another list in one click.
+                    This is the recommended workflow when you want something like Ctrl/Shift multi-select.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        container_labels = []
+        for idx, container in enumerate(st.session_state.sheet_group_containers):
+            if idx == 0:
+                container_labels.append("Available sheets")
+            else:
+                group_name = (st.session_state.get(f"sheet_group_name_{idx}") or container["header"]).strip()
+                container_labels.append(f"Component {idx}: {group_name}")
+
+        batch_col1, batch_col2, batch_col3 = st.columns([1.2, 2.2, 1.2])
+        with batch_col1:
+            source_label = st.selectbox(
+                "Source list",
+                options=container_labels,
+                key="batch_move_source_label",
+            )
+        source_index = container_labels.index(source_label)
+        source_items = st.session_state.sheet_group_containers[source_index]["items"]
+
+        with batch_col2:
+            batch_selected = st.multiselect(
+                "Select worksheets",
+                options=source_items,
+                key="batch_move_sheet_names",
+                placeholder="Choose one or more worksheets",
+            )
+
+        with batch_col3:
+            target_candidates = [label for idx, label in enumerate(container_labels) if idx != source_index]
+            if target_candidates:
+                target_label = st.selectbox(
+                    "Move to",
+                    options=target_candidates,
+                    key="batch_move_target_label",
+                )
+            else:
+                target_label = None
+                st.selectbox(
+                    "Move to",
+                    options=["No destination available"],
+                    key="batch_move_target_disabled",
+                    disabled=True,
+                )
+
+        if st.button(
+            "Move selected worksheets",
+            use_container_width=True,
+            disabled=not batch_selected or not target_candidates,
+        ):
+            move_selected_sheets_between_containers(
+                batch_selected,
+                source_index,
+                container_labels.index(target_label),
+                sheet_names,
+            )
+            st.session_state.batch_move_sheet_names = []
+            st.rerun()
+
+        preview_cols = st.columns(min(max(len(st.session_state.sheet_group_containers), 1), 4))
+        for idx, container in enumerate(st.session_state.sheet_group_containers):
+            col = preview_cols[idx % len(preview_cols)]
+            title = container_labels[idx]
+            items = container["items"]
+            body = "<br>".join(items) if items else "<span style='color:#70877b;'>No worksheets</span>"
+            with col:
+                st.markdown(
+                    f"""
+                    <div class="step-card">
+                        <div class="step-title">{title}</div>
+                        <div>{body}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        for idx, container in enumerate(st.session_state.sheet_group_containers[1:], start=1):
+            group_name = (st.session_state.get(f"sheet_group_name_{idx}") or "").strip()
+            group_items = container["items"]
+            if not group_items:
+                continue
+            if not group_name:
+                st.warning(f"Please enter a name for {DEFAULT_GROUP_LABEL.lower()} {idx} before calculation.")
+                continue
+            groups.append({"name": group_name, "sheet_names": group_items})
     else:
         sortable_key = f"sheet_group_sortable_{st.session_state.get('sheet_group_sortable_version', 0)}_{group_count}"
         sortable_containers = sort_items(
@@ -427,57 +554,6 @@ def render_sheet_group_builder(sheet_names: list[str]) -> list[dict[str, list[st
                 st.warning(f"Please enter a name for {DEFAULT_GROUP_LABEL.lower()} {idx} before calculation.")
                 continue
             groups.append({"name": group_name, "sheet_names": group_items})
-
-        st.markdown(
-            """
-            <div class="step-card">
-                <div class="step-title">Move multiple worksheets at once</div>
-                <div>
-                    Native Ctrl/Cmd multi-drag is not supported reliably by the current drag-and-drop widget.
-                    Use the controls below to move many worksheets into one component in a single action.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        bulk_col1, bulk_col2, bulk_col3 = st.columns([2.3, 1.2, 0.9])
-        with bulk_col1:
-            bulk_selected = st.multiselect(
-                "Select worksheets to move",
-                options=st.session_state.sheet_group_containers[0]["items"],
-                key="bulk_move_sheet_names",
-                placeholder="Choose one or more worksheets from Available sheets",
-            )
-        with bulk_col2:
-            target_options = {
-                f"Component {idx}: {(st.session_state.get(f'sheet_group_name_{idx}') or container['header']).strip()}": idx
-                for idx, container in enumerate(st.session_state.sheet_group_containers[1:], start=1)
-            }
-            if target_options:
-                target_label = st.selectbox(
-                    "Move to component",
-                    options=list(target_options.keys()),
-                    key="bulk_move_target_label",
-                )
-            else:
-                target_label = None
-                st.selectbox(
-                    "Move to component",
-                    options=["No component available"],
-                    key="bulk_move_target_label_disabled",
-                    disabled=True,
-                )
-        with bulk_col3:
-            st.write("")
-            st.write("")
-            if st.button(
-                "Move selected",
-                use_container_width=True,
-                disabled=not bulk_selected or not target_options,
-            ):
-                move_selected_sheets_to_group(bulk_selected, target_options[target_label], sheet_names)
-                st.session_state.bulk_move_sheet_names = []
-                st.rerun()
 
     if groups:
         preview_rows = [{"Component name": group["name"], "Sheets": ", ".join(group["sheet_names"])} for group in groups]
