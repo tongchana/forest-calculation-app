@@ -10,6 +10,7 @@ This Streamlit app wraps the existing forest calculation workflow and provides a
 4. Running forest calculation automatically
 5. Previewing key summary results
 6. Downloading the calculated Excel output
+7. Optionally combining multiple worksheets into named components before calculation
 
 ## Required files
 
@@ -83,10 +84,37 @@ If `template.xlsx` or `species_reference_master_v1.xlsx` is missing from the dep
 2. Fill in Tree, Sapling, Seedling, and Bamboo data offline
 3. Save the workbook as `.xlsx`
 4. Upload the completed workbook
-5. Click **Calculate**
-6. Preview the summaries and download:
+5. Optionally group worksheets into named components such as `IVI อ่างเก็บน้ำ A`
+6. Click **Calculate**
+7. Preview the summaries and download:
    - `forest_calculation_output_summary_by_site.xlsx`
    - `forest_calculation_output_details.xlsx`
+
+## Optional grouped-component calculation
+
+After upload, the web app can also combine multiple worksheets into a new named calculation component.
+
+Example:
+
+- `sheet 1`
+- `sheet 2`
+- `sheet 3`
+
+can be grouped into:
+
+- `IVI อ่างเก็บน้ำ A`
+
+The app will then:
+
+- keep the normal per-sheet calculations
+- add extra combined calculations for the new component
+- include the grouped result in the generated output workbooks
+
+Current behavior:
+
+- each worksheet can belong to one component in the grouping board
+- grouped components are added on top of the original per-sheet results, not instead of them
+- drag-and-drop is the default workflow, with Simple selection available as fallback
 
 ## Calculation scope
 

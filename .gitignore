@@ -4,6 +4,7 @@ __pycache__/
 *.pyd
 .Python
 .streamlit/secrets.toml
+streamlit_*.log
 
 forest_calculation_output.xlsx
 forest_calculation_output_summary_by_site.xlsx

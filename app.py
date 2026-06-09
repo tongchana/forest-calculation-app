@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import tempfile
 import traceback
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from openpyxl import load_workbook
+
+try:
+    from streamlit_sortables import sort_items
+except ImportError:  # pragma: no cover - optional UI enhancement
+    sort_items = None
 
 import run_forest_calculation as calc
 
@@ -28,6 +35,39 @@ PREVIEW_SHEETS = [
     "SUMMARY_SHANNON",
     "CHECK_UNMATCHED_SPECIES",
 ]
+DEFAULT_GROUP_LABEL = "Component"
+SORTABLE_STYLE = """
+.sortable-component {
+    border: 1px solid rgba(36, 92, 63, 0.12);
+    border-radius: 18px;
+    padding: 0.75rem;
+    background: #f8fcf9;
+}
+.sortable-container {
+    background: white;
+    border-radius: 14px;
+    border: 1px solid rgba(36, 92, 63, 0.10);
+    min-height: 240px;
+}
+.sortable-container-header {
+    background: #e8f2ec;
+    color: #1f6b4f;
+    font-weight: 700;
+    padding: 0.75rem 0.9rem;
+    border-bottom: 1px solid rgba(36, 92, 63, 0.08);
+}
+.sortable-container-body {
+    padding: 0.65rem;
+}
+.sortable-item, .sortable-item:hover {
+    background: linear-gradient(135deg, #f4fbf6 0%, #ebf6ef 100%);
+    border: 1px solid rgba(46, 125, 90, 0.16);
+    color: #183c2c;
+    border-radius: 10px;
+    margin-bottom: 0.45rem;
+    font-weight: 600;
+}
+"""
 
 
 def inject_css() -> None:
@@ -162,6 +202,179 @@ def load_binary_file(file_path: Path) -> bytes:
     return file_path.read_bytes()
 
 
+def get_uploaded_sheet_names(uploaded_file) -> list[str]:
+    workbook = load_workbook(filename=BytesIO(uploaded_file.getvalue()), read_only=True, data_only=True)
+    try:
+        return [sheet_name for sheet_name in workbook.sheetnames if not calc.should_skip_sheet(sheet_name)]
+    finally:
+        workbook.close()
+
+
+def make_group_container(index: int) -> dict[str, list[str] | str]:
+    return {"header": f"{DEFAULT_GROUP_LABEL} {index}", "items": []}
+
+
+def order_items_by_reference(items: list[str], reference_order: list[str]) -> list[str]:
+    position = {name: idx for idx, name in enumerate(reference_order)}
+    unique_items = list(dict.fromkeys(items))
+    return sorted(unique_items, key=lambda name: position.get(name, len(reference_order)))
+
+
+def ensure_sheet_group_state(sheet_names: list[str]) -> None:
+    signature = tuple(sheet_names)
+    if st.session_state.get("sheet_group_signature") == signature:
+        return
+
+    st.session_state.sheet_group_signature = signature
+    st.session_state.sheet_group_containers = [{"header": "Available sheets", "items": sheet_names.copy()}]
+    st.session_state.sheet_group_name_count = 0
+
+
+def add_sheet_group() -> None:
+    containers = st.session_state.sheet_group_containers
+    next_index = len(containers)
+    containers.append(make_group_container(next_index))
+    st.session_state.sheet_group_name_count = next_index
+
+
+def remove_sheet_group(reference_order: list[str]) -> None:
+    containers = st.session_state.sheet_group_containers
+    if len(containers) <= 1:
+        return
+
+    removed = containers.pop()
+    available_items = containers[0]["items"] + removed["items"]
+    containers[0]["items"] = order_items_by_reference(available_items, reference_order)
+    st.session_state.sheet_group_name_count = len(containers) - 1
+
+
+def normalize_sortable_containers(
+    containers: list[dict[str, list[str] | str]],
+    sheet_names: list[str],
+) -> list[dict[str, list[str] | str]]:
+    allowed = set(sheet_names)
+    assigned: set[str] = set()
+    normalized: list[dict[str, list[str] | str]] = []
+
+    for idx, container in enumerate(containers):
+        items = [item for item in container.get("items", []) if item in allowed]
+        deduped: list[str] = []
+        for item in items:
+            if item in assigned:
+                continue
+            assigned.add(item)
+            deduped.append(item)
+        header = "Available sheets" if idx == 0 else container.get("header", f"{DEFAULT_GROUP_LABEL} {idx}")
+        normalized.append({"header": header, "items": deduped})
+
+    unassigned = [sheet_name for sheet_name in sheet_names if sheet_name not in assigned]
+    if normalized:
+        normalized[0]["items"] = order_items_by_reference(normalized[0]["items"] + unassigned, sheet_names)
+    return normalized
+
+
+def render_sheet_group_builder(sheet_names: list[str]) -> list[dict[str, list[str]]]:
+    ensure_sheet_group_state(sheet_names)
+
+    st.markdown('<div class="section-label">Optional grouping</div>', unsafe_allow_html=True)
+    render_card(
+        "Combine Multiple Sheets Into One Calculation Component",
+        "Drag worksheets into custom components to calculate combined IVI, biomass, volume, and Shannon results in addition to the normal per-sheet outputs.",
+    )
+
+    action_col1, action_col2 = st.columns([1, 1])
+    with action_col1:
+        st.button("Add component", on_click=add_sheet_group, use_container_width=True)
+    with action_col2:
+        st.button(
+            "Remove last component",
+            on_click=remove_sheet_group,
+            args=(sheet_names,),
+            disabled=len(st.session_state.sheet_group_containers) <= 1,
+            use_container_width=True,
+        )
+
+    group_count = len(st.session_state.sheet_group_containers) - 1
+    for idx in range(1, group_count + 1):
+        group_key = f"sheet_group_name_{idx}"
+        if group_key not in st.session_state:
+            st.session_state[group_key] = f"IVI {DEFAULT_GROUP_LABEL.lower()} {idx}"
+        st.text_input(f"Name for {DEFAULT_GROUP_LABEL.lower()} {idx}", key=group_key)
+
+    groups: list[dict[str, list[str]]] = []
+
+    builder_mode = "Drag and drop"
+    if sort_items is not None:
+        builder_mode = st.radio(
+            "Component builder mode",
+            options=["Drag and drop", "Simple selection"],
+            horizontal=True,
+            help="Drag and drop is the default workflow. Switch to Simple selection if your browser or device has trouble with dragging.",
+        )
+
+    if builder_mode == "Simple selection":
+        assigned: set[str] = set()
+        for idx in range(1, group_count + 1):
+            selection_key = f"sheet_group_items_{idx}"
+            current_selected = [item for item in st.session_state.get(selection_key, []) if item in sheet_names]
+            available_options = [item for item in sheet_names if item not in assigned or item in current_selected]
+            st.markdown(
+                f"""
+                <div class="step-card">
+                    <div class="step-title">Component {idx}</div>
+                    <div>Select one or more worksheets to combine under this component.</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            selected_items = st.multiselect(
+                f"Worksheets in component {idx}",
+                options=available_options,
+                default=current_selected,
+                key=selection_key,
+                placeholder="Choose worksheets for this component",
+            )
+            assigned.update(selected_items)
+            group_name = (st.session_state.get(f"sheet_group_name_{idx}") or "").strip()
+            if selected_items and not group_name:
+                st.warning(f"Please enter a name for {DEFAULT_GROUP_LABEL.lower()} {idx} before calculation.")
+            elif selected_items:
+                groups.append({"name": group_name, "sheet_names": selected_items})
+
+        remaining_sheets = [item for item in sheet_names if item not in assigned]
+        if remaining_sheets:
+            st.caption(f"Still ungrouped: {', '.join(remaining_sheets)}")
+        else:
+            st.caption("All worksheets have been assigned to components.")
+    else:
+        sortable_containers = sort_items(
+            st.session_state.sheet_group_containers,
+            multi_containers=True,
+            custom_style=SORTABLE_STYLE,
+            key="sheet_group_sortable",
+        )
+        st.session_state.sheet_group_containers = normalize_sortable_containers(sortable_containers, sheet_names)
+
+        for idx, container in enumerate(st.session_state.sheet_group_containers[1:], start=1):
+            group_name = (st.session_state.get(f"sheet_group_name_{idx}") or "").strip()
+            group_items = container["items"]
+            if not group_items:
+                continue
+            if not group_name:
+                st.warning(f"Please enter a name for {DEFAULT_GROUP_LABEL.lower()} {idx} before calculation.")
+                continue
+            groups.append({"name": group_name, "sheet_names": group_items})
+
+    if groups:
+        preview_rows = [{"Component name": group["name"], "Sheets": ", ".join(group["sheet_names"])} for group in groups]
+        st.dataframe(pd.DataFrame(preview_rows), use_container_width=True, hide_index=True)
+        st.caption("Each worksheet can belong to one component in this drag-and-drop board.")
+    else:
+        st.caption("No combined components defined. The app will calculate each worksheet separately, like before.")
+
+    return groups
+
+
 def render_sidebar() -> None:
     st.sidebar.markdown("## About this tool")
     st.sidebar.write(
@@ -283,6 +496,7 @@ def run_uploaded_workflow(
     uploaded_file,
     plot_area_ha: float,
     rai_per_hectare: float,
+    sheet_groups: list[dict[str, list[str]]] | None = None,
 ) -> tuple[bytes, bytes, dict[str, pd.DataFrame]]:
     with tempfile.TemporaryDirectory() as tmp_dir:
         temp_dir = Path(tmp_dir)
@@ -298,6 +512,7 @@ def run_uploaded_workflow(
                 output_base=output_base,
                 plot_area_ha=plot_area_ha,
                 rai_per_hectare=rai_per_hectare,
+                sheet_groups=sheet_groups,
             )
         else:
             result_sheets = calc.process_workbook(
@@ -305,6 +520,7 @@ def run_uploaded_workflow(
                 master_file=MASTER_FILE,
                 plot_area_ha=plot_area_ha,
                 rai_per_hectare=rai_per_hectare,
+                sheet_groups=sheet_groups,
             )
             summary_path, detail_path = calc.resolve_output_paths(uploaded_path, str(output_base))
             calc.write_summary_by_site_workbook(summary_path, result_sheets)
@@ -325,6 +541,12 @@ def main() -> None:
         st.session_state.result_sheets = None
     if "last_error" not in st.session_state:
         st.session_state.last_error = None
+    if "sheet_group_containers" not in st.session_state:
+        st.session_state.sheet_group_containers = [{"header": "Available sheets", "items": []}]
+    if "sheet_group_signature" not in st.session_state:
+        st.session_state.sheet_group_signature = ()
+    if "sheet_group_name_count" not in st.session_state:
+        st.session_state.sheet_group_name_count = 0
 
     st.markdown(
         f"""
@@ -371,6 +593,17 @@ def main() -> None:
         render_card("Upload Completed Template", "Upload the filled workbook after offline field-data entry.")
         uploaded_file = st.file_uploader("Upload completed Excel template", type=["xlsx"])
 
+    selected_sheet_groups: list[dict[str, list[str]]] = []
+    if uploaded_file is not None:
+        try:
+            uploaded_sheet_names = get_uploaded_sheet_names(uploaded_file)
+        except Exception:  # noqa: BLE001
+            uploaded_sheet_names = []
+            st.warning("The workbook was uploaded, but its worksheet list could not be previewed yet.")
+        else:
+            if uploaded_sheet_names:
+                selected_sheet_groups = render_sheet_group_builder(uploaded_sheet_names)
+
     st.markdown('<div class="section-label">Step 3</div>', unsafe_allow_html=True)
     render_card("Calculate", "Run the existing Python calculation workflow using the uploaded workbook and the default species master file.")
     calc_col1, calc_col2, calc_col3 = st.columns([1, 1, 1.4])
@@ -411,6 +644,7 @@ def main() -> None:
                         uploaded_file=uploaded_file,
                         plot_area_ha=plot_area_ha,
                         rai_per_hectare=rai_per_hectare,
+                        sheet_groups=selected_sheet_groups,
                     )
                     st.session_state.summary_result_bytes = summary_result_bytes
                     st.session_state.detail_result_bytes = detail_result_bytes

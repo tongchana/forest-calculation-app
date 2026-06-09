@@ -364,6 +364,15 @@ def read_sheet_frame(input_file: Path, sheet_name: str) -> pd.DataFrame:
     return pd.read_excel(input_file, sheet_name=sheet_name, header=1, dtype=object)
 
 
+def list_processable_sheet_names(input_file: Path) -> list[str]:
+    workbook_headers = pd.read_excel(input_file, sheet_name=None, header=None, nrows=2)
+    return [
+        sheet_name
+        for sheet_name, header_df in workbook_headers.items()
+        if not should_skip_sheet(sheet_name) and header_df.shape[0] >= 2
+    ]
+
+
 def prepare_block_frame(
     source_df: pd.DataFrame,
     sheet_name: str,
@@ -373,7 +382,12 @@ def prepare_block_frame(
 ) -> pd.DataFrame:
     records: list[dict[str, object]] = []
     for excel_row_no, row in enumerate(source_df.itertuples(index=False, name=None), start=3):
-        record: dict[str, object] = {"sheet_name": sheet_name, "block_type": block_type, "row_no": excel_row_no}
+        record: dict[str, object] = {
+            "sheet_name": sheet_name,
+            "source_sheet_name": sheet_name,
+            "block_type": block_type,
+            "row_no": excel_row_no,
+        }
         for header, col_idx in expected_columns.items():
             value = row[col_idx] if col_idx < len(row) else None
             if header in {"Species", "Plot", "forest type"}:
@@ -401,6 +415,66 @@ def prepare_block_frame(
         if column in frame.columns:
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
     return frame
+
+
+def normalize_sheet_groups(
+    sheet_groups: list[dict[str, object]] | None,
+    available_sheet_names: list[str],
+) -> list[dict[str, list[str]]]:
+    if not sheet_groups:
+        return []
+
+    available_set = set(available_sheet_names)
+    normalized: list[dict[str, list[str]]] = []
+    seen_names: set[str] = set()
+
+    for raw_group in sheet_groups:
+        name = normalize_text(raw_group.get("name"))
+        if not name:
+            raise ValueError("Each sheet group must have a name.")
+        if name in seen_names:
+            raise ValueError(f"Duplicate sheet group name: {name}")
+        if name in available_set:
+            raise ValueError(f"Sheet group name '{name}' conflicts with an existing worksheet name.")
+
+        raw_sheets = raw_group.get("sheet_names") or []
+        group_sheet_names: list[str] = []
+        seen_sheet_names: set[str] = set()
+        for sheet_name in raw_sheets:
+            normalized_sheet_name = normalize_text(sheet_name)
+            if not normalized_sheet_name:
+                continue
+            if normalized_sheet_name not in available_set:
+                raise ValueError(f"Worksheet '{normalized_sheet_name}' was not found in the uploaded workbook.")
+            if normalized_sheet_name in seen_sheet_names:
+                continue
+            seen_sheet_names.add(normalized_sheet_name)
+            group_sheet_names.append(normalized_sheet_name)
+
+        if not group_sheet_names:
+            continue
+
+        normalized.append({"name": name, "sheet_names": group_sheet_names})
+        seen_names.add(name)
+
+    return normalized
+
+
+def append_grouped_records(frame: pd.DataFrame, sheet_groups: list[dict[str, list[str]]]) -> pd.DataFrame:
+    if frame.empty or not sheet_groups or "sheet_name" not in frame.columns:
+        return frame
+
+    grouped_frames = [frame]
+    for group in sheet_groups:
+        group_rows = frame[frame["sheet_name"].isin(group["sheet_names"])].copy()
+        if group_rows.empty:
+            continue
+        group_rows["sheet_name"] = group["name"]
+        grouped_frames.append(group_rows)
+
+    if len(grouped_frames) == 1:
+        return frame
+    return pd.concat(grouped_frames, ignore_index=True)
 
 
 def load_master_reference(master_file: Path) -> dict[str, dict[str, object]]:
@@ -1311,11 +1385,23 @@ def ensure_output_frames(frames: dict[str, pd.DataFrame]) -> dict[str, pd.DataFr
     return normalized
 
 
-def process_workbook(input_file: Path, master_file: Path, plot_area_ha: float, rai_per_hectare: float) -> dict[str, pd.DataFrame]:
+def process_workbook(
+    input_file: Path,
+    master_file: Path,
+    plot_area_ha: float,
+    rai_per_hectare: float,
+    sheet_groups: list[dict[str, object]] | None = None,
+) -> dict[str, pd.DataFrame]:
     ref_map = load_master_reference(master_file)
     LOG.info("Loaded %s species reference entries.", f"{len(ref_map):,}")
 
     workbook_headers = pd.read_excel(input_file, sheet_name=None, header=None, nrows=2)
+    available_sheet_names = [
+        sheet_name
+        for sheet_name, header_df in workbook_headers.items()
+        if not should_skip_sheet(sheet_name) and header_df.shape[0] >= 2
+    ]
+    normalized_sheet_groups = normalize_sheet_groups(sheet_groups, available_sheet_names)
 
     tree_frames: list[pd.DataFrame] = []
     sapling_frames: list[pd.DataFrame] = []
@@ -1395,6 +1481,11 @@ def process_workbook(input_file: Path, master_file: Path, plot_area_ha: float, r
     seedling_df = pd.concat(seedling_frames, ignore_index=True) if seedling_frames else pd.DataFrame(columns=["sheet_name"])
     bamboo_df = pd.concat(bamboo_frames, ignore_index=True) if bamboo_frames else pd.DataFrame(columns=["sheet_name"])
 
+    tree_df = append_grouped_records(tree_df, normalized_sheet_groups)
+    sapling_df = append_grouped_records(sapling_df, normalized_sheet_groups)
+    seedling_df = append_grouped_records(seedling_df, normalized_sheet_groups)
+    bamboo_df = append_grouped_records(bamboo_df, normalized_sheet_groups)
+
     biomass_detail, biomass_summary = build_biomass_outputs(tree_df)
     volume_detail, volume_summary, unmatched_species = build_volume_outputs(tree_df, sapling_df, ref_map)
     ivi_detail, shannon_summary = build_ivi_outputs(tree_df, plot_area_ha, rai_per_hectare)
@@ -1430,6 +1521,7 @@ def process_workbook(input_file: Path, master_file: Path, plot_area_ha: float, r
     outputs["__meta__"] = {
         "plot_area_ha": plot_area_ha,
         "rai_per_hectare": rai_per_hectare,
+        "sheet_groups": normalized_sheet_groups,
     }
     return outputs
 
@@ -1546,6 +1638,7 @@ def run_calculation(
     output_file: str | Path | None = None,
     plot_area_ha: float = PLOT_AREA_HA,
     rai_per_hectare: float = RAI_PER_HECTARE,
+    sheet_groups: list[dict[str, object]] | None = None,
 ) -> tuple[Path | None, dict[str, pd.DataFrame]]:
     input_path = Path(input_file)
     master_path = Path(master_file)
@@ -1560,6 +1653,7 @@ def run_calculation(
         master_file=master_path,
         plot_area_ha=plot_area_ha,
         rai_per_hectare=rai_per_hectare,
+        sheet_groups=sheet_groups,
     )
 
     output_path = Path(output_file) if output_file else None
@@ -1575,6 +1669,7 @@ def run_calculation_split_outputs(
     output_base: str | Path | None = None,
     plot_area_ha: float = PLOT_AREA_HA,
     rai_per_hectare: float = RAI_PER_HECTARE,
+    sheet_groups: list[dict[str, object]] | None = None,
 ) -> tuple[Path, Path, dict[str, pd.DataFrame]]:
     input_path = Path(input_file)
     master_path = Path(master_file)
@@ -1589,6 +1684,7 @@ def run_calculation_split_outputs(
         master_file=master_path,
         plot_area_ha=plot_area_ha,
         rai_per_hectare=rai_per_hectare,
+        sheet_groups=sheet_groups,
     )
 
     summary_file, detail_file = resolve_output_paths(input_path, str(output_base) if output_base else None)
