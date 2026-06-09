@@ -551,7 +551,12 @@ def run_uploaded_workflow(
         component_bytes = None
         if sheet_groups and COMPONENT_TEMPLATE_FILE.exists():
             component_path = temp_dir / COMPONENT_OUTPUT_FILENAME
-            calc.write_component_summary_workbook(component_path, COMPONENT_TEMPLATE_FILE, result_sheets)
+            calc.write_component_summary_workbook(
+                component_path,
+                COMPONENT_TEMPLATE_FILE,
+                result_sheets,
+                summary_file=summary_path,
+            )
             component_bytes = component_path.read_bytes()
         return summary_path.read_bytes(), detail_path.read_bytes(), component_bytes, result_sheets
 

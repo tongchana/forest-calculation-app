@@ -1708,7 +1708,12 @@ def write_detail_workbook(detail_file: Path, sheets: dict[str, pd.DataFrame]) ->
     workbook.save(detail_file)
 
 
-def write_component_summary_workbook(component_file: Path, template_file: Path, sheets: dict[str, pd.DataFrame]) -> None:
+def write_component_summary_workbook(
+    component_file: Path,
+    template_file: Path,
+    sheets: dict[str, pd.DataFrame],
+    summary_file: Path | None = None,
+) -> None:
     component_names = get_component_group_names_in_order(sheets)[: len(COMPONENT_IVI_START_ROWS)]
     workbook = load_workbook(template_file)
     worksheet = workbook[workbook.sheetnames[0]]
@@ -1717,6 +1722,23 @@ def write_component_summary_workbook(component_file: Path, template_file: Path, 
 
     plot_area_ha = sheets["__meta__"]["plot_area_ha"]
     rai_per_hectare = sheets["__meta__"]["rai_per_hectare"]
+    summary_workbook = load_workbook(summary_file, data_only=True) if summary_file and summary_file.exists() else None
+
+    def find_summary_sheet_by_component_name(component_name: str):
+        if summary_workbook is None:
+            return None
+        if component_name in summary_workbook.sheetnames:
+            return summary_workbook[component_name]
+        safe_name = safe_sheet_name(component_name, set())
+        if safe_name in summary_workbook.sheetnames:
+            return summary_workbook[safe_name]
+        for candidate_name in summary_workbook.sheetnames:
+            candidate_sheet = summary_workbook[candidate_name]
+            if normalize_text(candidate_sheet.cell(1, 1).value) != "Overall Summary":
+                continue
+            if normalize_text(candidate_sheet.cell(3, 1).value) == component_name:
+                return candidate_sheet
+        return None
 
     def species_count_from_tree(component_name: str) -> int:
         frame = build_ivi_summary(component_name, sheets)
@@ -1838,9 +1860,55 @@ def write_component_summary_workbook(component_file: Path, template_file: Path, 
         belowground_value = float(belowground_total or 0)
         return (aboveground_total + belowground_value) * 0.47
 
+    def top_ivi_rows_from_summary_workbook(component_name: str) -> pd.DataFrame | None:
+        if summary_workbook is None:
+            return None
+
+        component_sheet = find_summary_sheet_by_component_name(component_name)
+        if component_sheet is None:
+            return None
+        ivi_title_row = None
+        for row_idx in range(1, component_sheet.max_row + 1):
+            if component_sheet.cell(row_idx, 1).value == "IVI Summary":
+                ivi_title_row = row_idx
+                break
+
+        if ivi_title_row is None:
+            return None
+
+        rows: list[dict[str, object]] = []
+        for row_idx in range(ivi_title_row + 2, component_sheet.max_row + 1):
+            species = component_sheet.cell(row_idx, 1).value
+            if species in (None, ""):
+                break
+            rows.append(
+                {
+                    "Species": species,
+                    "Density (tree/rai)": component_sheet.cell(row_idx, 4).value,
+                    "Frequency": component_sheet.cell(row_idx, 6).value,
+                    "BA (m2)": component_sheet.cell(row_idx, 8).value,
+                    "Dominance": component_sheet.cell(row_idx, 9).value,
+                    "RDensity": component_sheet.cell(row_idx, 10).value,
+                    "RFrequency": component_sheet.cell(row_idx, 11).value,
+                    "RDominance": component_sheet.cell(row_idx, 12).value,
+                    "IVI": component_sheet.cell(row_idx, 13).value,
+                    "Shannon contribution": component_sheet.cell(row_idx, 17).value,
+                }
+            )
+            if len(rows) >= 10:
+                break
+
+        if not rows:
+            return None
+        return pd.DataFrame(rows)
+
     def fill_ivi_block(component_name: str, title_row: int) -> None:
         worksheet.cell(title_row, 2).value = component_name
-        frame = build_ivi_summary(component_name, sheets)
+        raw_frame = build_ivi_summary(component_name, sheets)
+        frame = top_ivi_rows_from_summary_workbook(component_name)
+        expected_rows = min(10, len(raw_frame.index))
+        if frame is None or len(frame.index) < expected_rows:
+            frame = raw_frame
         data_start_row = title_row + 2
         data_end_row = title_row + 11
         for row_idx in range(data_start_row, data_end_row + 1):
@@ -1954,6 +2022,68 @@ def write_component_summary_workbook(component_file: Path, template_file: Path, 
     worksheet.cell(59, 2).value = sum(carbon_values) if carbon_values else None
 
     workbook.save(component_file)
+    if summary_file and summary_file.exists():
+        rewrite_component_ivi_blocks_from_summary_file(component_file, summary_file)
+
+
+def rewrite_component_ivi_blocks_from_summary_file(component_file: Path, summary_file: Path) -> None:
+    component_workbook = load_workbook(component_file)
+    summary_workbook = load_workbook(summary_file, data_only=True)
+    component_sheet = component_workbook[component_workbook.sheetnames[0]]
+
+    def find_summary_sheet_by_component_name(component_name: str):
+        if component_name in summary_workbook.sheetnames:
+            return summary_workbook[component_name]
+        safe_name = safe_sheet_name(component_name, set())
+        if safe_name in summary_workbook.sheetnames:
+            return summary_workbook[safe_name]
+        for candidate_name in summary_workbook.sheetnames:
+            candidate_sheet = summary_workbook[candidate_name]
+            if normalize_text(candidate_sheet.cell(1, 1).value) != "Overall Summary":
+                continue
+            if normalize_text(candidate_sheet.cell(3, 1).value) == component_name:
+                return candidate_sheet
+        return None
+
+    for start_row in COMPONENT_IVI_START_ROWS:
+        component_name = normalize_text(component_sheet.cell(start_row, 2).value)
+        if not component_name:
+            continue
+        summary_sheet = find_summary_sheet_by_component_name(component_name)
+        if summary_sheet is None:
+            continue
+        summary_ivi_row = None
+        for row_idx in range(1, summary_sheet.max_row + 1):
+            if summary_sheet.cell(row_idx, 1).value == "IVI Summary":
+                summary_ivi_row = row_idx
+                break
+        if summary_ivi_row is None:
+            continue
+
+        data_start_row = start_row + 2
+        data_end_row = start_row + 11
+        for row_idx in range(data_start_row, data_end_row + 1):
+            for col_idx in range(1, 11):
+                component_sheet.cell(row_idx, col_idx).value = None
+
+        target_row = data_start_row
+        for row_idx in range(summary_ivi_row + 2, summary_sheet.max_row + 1):
+            species = summary_sheet.cell(row_idx, 1).value
+            if species in (None, "") or target_row > data_end_row:
+                break
+            component_sheet.cell(target_row, 1).value = species
+            component_sheet.cell(target_row, 2).value = summary_sheet.cell(row_idx, 4).value
+            component_sheet.cell(target_row, 3).value = summary_sheet.cell(row_idx, 6).value
+            component_sheet.cell(target_row, 4).value = summary_sheet.cell(row_idx, 8).value
+            component_sheet.cell(target_row, 5).value = summary_sheet.cell(row_idx, 9).value
+            component_sheet.cell(target_row, 6).value = summary_sheet.cell(row_idx, 10).value
+            component_sheet.cell(target_row, 7).value = summary_sheet.cell(row_idx, 11).value
+            component_sheet.cell(target_row, 8).value = summary_sheet.cell(row_idx, 12).value
+            component_sheet.cell(target_row, 9).value = summary_sheet.cell(row_idx, 13).value
+            component_sheet.cell(target_row, 10).value = summary_sheet.cell(row_idx, 17).value
+            target_row += 1
+
+    component_workbook.save(component_file)
 
 
 def write_combined_output_workbook(output_file: Path, sheets: dict[str, pd.DataFrame]) -> None:
