@@ -1229,6 +1229,8 @@ def build_summary_all(
     shannon_summary: pd.DataFrame,
     unmatched_df: pd.DataFrame,
 ) -> pd.DataFrame:
+    plot_area_ha = PLOT_AREA_HA
+    rai_per_hectare = RAI_PER_HECTARE
     sheet_names = sorted(
         {
             *tree_df.get("sheet_name", pd.Series(dtype=object)).dropna().astype(str).tolist(),
@@ -1248,6 +1250,19 @@ def build_summary_all(
         ]
         shannon_row = shannon_summary[shannon_summary["sheet_name"] == sheet_name]
         biomass_rows = biomass_summary[biomass_summary["sheet_name"] == sheet_name]
+        sapling_rows = sapling_df[sapling_df["sheet_name"] == sheet_name] if not sapling_df.empty else pd.DataFrame()
+        seedling_rows = seedling_df[seedling_df["sheet_name"] == sheet_name] if not seedling_df.empty else pd.DataFrame()
+
+        sapling_plot_count = (
+            sapling_rows["Plot"].astype(str).str.strip().replace("", np.nan).dropna().nunique() if not sapling_rows.empty else 0
+        )
+        seedling_plot_count = (
+            seedling_rows["Plot"].astype(str).str.strip().replace("", np.nan).dropna().nunique() if not seedling_rows.empty else 0
+        )
+        sapling_total = pd.to_numeric(sapling_rows["Number"], errors="coerce").fillna(0).sum() if not sapling_rows.empty else 0.0
+        seedling_total = pd.to_numeric(seedling_rows["Number"], errors="coerce").fillna(0).sum() if not seedling_rows.empty else 0.0
+        sapling_area_rai = sapling_plot_count * plot_area_ha * rai_per_hectare if sapling_plot_count else np.nan
+        seedling_area_rai = seedling_plot_count * plot_area_ha * rai_per_hectare if seedling_plot_count else np.nan
 
         rows.append(
             {
@@ -1262,6 +1277,8 @@ def build_summary_all(
                 "total_seedling_number": seedling_df.loc[seedling_df["sheet_name"] == sheet_name, "Number"].sum()
                 if not seedling_df.empty
                 else 0.0,
+                "sapling_per_rai": safe_divide(sapling_total, sapling_area_rai),
+                "seedling_per_rai": safe_divide(seedling_total, seedling_area_rai),
                 "total_bamboo_culm": bamboo_df.loc[bamboo_df["sheet_name"] == sheet_name, "Culm"].sum()
                 if not bamboo_df.empty
                 else 0.0,
@@ -1737,6 +1754,21 @@ def write_component_summary_workbook(component_file: Path, template_file: Path, 
             result[normalize_text(row["Timber Quality Class (TQ)"]).lower()] = row["Per rai"]
         return result
 
+    def block_density_per_rai(component_name: str, block_name: str) -> object:
+        summary_all = sheets["SUMMARY_ALL"]
+        if summary_all.empty:
+            return None
+        working = summary_all[summary_all["sheet_name"] == component_name]
+        if working.empty:
+            return None
+        row = working.iloc[0]
+        block_key = block_name.lower()
+        if block_key == "sapling":
+            return row.get("sapling_per_rai")
+        if block_key == "seedling":
+            return row.get("seedling_per_rai")
+        return None
+
     def biomass_summary_map(component_name: str) -> dict[str, object]:
         frame = sheets["SUMMARY_BIOMASS"]
         if frame.empty:
@@ -1793,9 +1825,9 @@ def write_component_summary_workbook(component_file: Path, template_file: Path, 
         worksheet.cell(density_row, 5).value = density_map.get(("tree", "dbh > 60"))
         worksheet.cell(density_row, 6).value = density_map.get(("tree", "total"))
         worksheet.cell(density_row, 7).value = species_count_from_sapling(component_name)
-        worksheet.cell(density_row, 8).value = density_map.get(("sapling", "total"))
+        worksheet.cell(density_row, 8).value = block_density_per_rai(component_name, "sapling")
         worksheet.cell(density_row, 9).value = species_count_from_seedling(component_name)
-        worksheet.cell(density_row, 10).value = density_map.get(("seedling", "count summary"))
+        worksheet.cell(density_row, 10).value = block_density_per_rai(component_name, "seedling")
 
         worksheet.cell(volume_row, 1).value = component_name
         worksheet.cell(volume_row, 2).value = tq_map.get("tq 1.1")
