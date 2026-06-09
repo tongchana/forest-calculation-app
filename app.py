@@ -266,6 +266,10 @@ def bump_sheet_group_sortable_version() -> None:
     st.session_state.sheet_group_sortable_version = st.session_state.get("sheet_group_sortable_version", 0) + 1
 
 
+def bump_batch_move_version() -> None:
+    st.session_state.batch_move_version = st.session_state.get("batch_move_version", 0) + 1
+
+
 def add_sheet_group() -> None:
     containers = st.session_state.sheet_group_containers
     if len(containers) - 1 >= MAX_COMPONENTS:
@@ -274,6 +278,7 @@ def add_sheet_group() -> None:
     containers.append(make_group_container(next_index))
     st.session_state.sheet_group_name_count = next_index
     bump_sheet_group_sortable_version()
+    bump_batch_move_version()
 
 
 def remove_sheet_group(reference_order: list[str]) -> None:
@@ -286,6 +291,7 @@ def remove_sheet_group(reference_order: list[str]) -> None:
     containers[0]["items"] = order_items_by_reference(available_items, reference_order)
     st.session_state.sheet_group_name_count = len(containers) - 1
     bump_sheet_group_sortable_version()
+    bump_batch_move_version()
 
 
 def move_selected_sheets_to_group(selected_sheet_names: list[str], target_group_index: int, reference_order: list[str]) -> None:
@@ -302,6 +308,7 @@ def move_selected_sheets_to_group(selected_sheet_names: list[str], target_group_
     containers[target_group_index]["items"] = order_items_by_reference(target_items, reference_order)
     containers[0]["items"] = order_items_by_reference(containers[0]["items"], reference_order)
     bump_sheet_group_sortable_version()
+    bump_batch_move_version()
 
 
 def move_selected_sheets_between_containers(
@@ -331,6 +338,7 @@ def move_selected_sheets_between_containers(
     containers[target_container_index]["items"] = order_items_by_reference(target_items, reference_order)
     containers[0]["items"] = order_items_by_reference(containers[0]["items"], reference_order)
     bump_sheet_group_sortable_version()
+    bump_batch_move_version()
 
 
 def normalize_sortable_containers(
@@ -469,12 +477,13 @@ def render_sheet_group_builder(sheet_names: list[str]) -> list[dict[str, list[st
             )
         source_index = container_labels.index(source_label)
         source_items = st.session_state.sheet_group_containers[source_index]["items"]
+        batch_move_key_suffix = st.session_state.get("batch_move_version", 0)
 
         with batch_col2:
             batch_selected = st.multiselect(
                 "Select worksheets",
                 options=source_items,
-                key="batch_move_sheet_names",
+                key=f"batch_move_sheet_names_{batch_move_key_suffix}",
                 placeholder="Choose one or more worksheets",
             )
 
@@ -484,7 +493,7 @@ def render_sheet_group_builder(sheet_names: list[str]) -> list[dict[str, list[st
                 target_label = st.selectbox(
                     "Move to",
                     options=target_candidates,
-                    key="batch_move_target_label",
+                    key=f"batch_move_target_label_{batch_move_key_suffix}",
                 )
             else:
                 target_label = None
@@ -506,7 +515,6 @@ def render_sheet_group_builder(sheet_names: list[str]) -> list[dict[str, list[st
                 container_labels.index(target_label),
                 sheet_names,
             )
-            st.session_state.batch_move_sheet_names = []
             st.rerun()
 
         preview_cols = st.columns(min(max(len(st.session_state.sheet_group_containers), 1), 4))
@@ -749,6 +757,8 @@ def main() -> None:
         st.session_state.sheet_group_signature = ()
     if "sheet_group_name_count" not in st.session_state:
         st.session_state.sheet_group_name_count = 0
+    if "batch_move_version" not in st.session_state:
+        st.session_state.batch_move_version = 0
 
     st.markdown(
         f"""
