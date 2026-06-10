@@ -853,7 +853,7 @@ def build_ivi_outputs(tree_df: pd.DataFrame, plot_area_ha: float, rai_per_hectar
         species_summary["RDominance"] = species_summary["Dominance"] / species_summary["Dominance"].sum() * 100
         species_summary["IVI"] = (
             species_summary["RDensity"] + species_summary["RFrequency"] + species_summary["RDominance"]
-        ) / 3
+        )
         total_trees = species_summary["Number of tree"].sum()
         species_summary["Pi"] = species_summary["Number of tree"] / total_trees
         species_summary["ln Pi"] = species_summary["Pi"].apply(math.log)

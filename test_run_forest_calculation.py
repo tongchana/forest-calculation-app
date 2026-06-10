@@ -52,7 +52,7 @@ class ForestCalculationLogicTests(unittest.TestCase):
         self.assertAlmostEqual(species_a["RDominance"], species_a["Dominance"] / total_dominance * 100)
         self.assertAlmostEqual(
             species_a["IVI"],
-            (species_a["RDensity"] + species_a["RFrequency"] + species_a["RDominance"]) / 3,
+            species_a["RDensity"] + species_a["RFrequency"] + species_a["RDominance"],
         )
 
     def test_shannon_formula_unchanged(self):
