@@ -423,13 +423,14 @@ def prepare_block_frame(
 def normalize_sheet_groups(
     sheet_groups: list[dict[str, object]] | None,
     available_sheet_names: list[str],
-) -> list[dict[str, list[str]]]:
+) -> list[dict[str, object]]:
     if not sheet_groups:
         return []
 
     available_set = set(available_sheet_names)
-    normalized: list[dict[str, list[str]]] = []
+    normalized: list[dict[str, object]] = []
     seen_names: set[str] = set()
+    used_internal_names = set(available_set)
 
     for raw_group in sheet_groups:
         name = normalize_text(raw_group.get("name"))
@@ -437,8 +438,6 @@ def normalize_sheet_groups(
             raise ValueError("Each sheet group must have a name.")
         if name in seen_names:
             raise ValueError(f"Duplicate sheet group name: {name}")
-        if name in available_set:
-            raise ValueError(f"Sheet group name '{name}' conflicts with an existing worksheet name.")
 
         raw_sheets = raw_group.get("sheet_names") or []
         group_sheet_names: list[str] = []
@@ -457,13 +456,20 @@ def normalize_sheet_groups(
         if not group_sheet_names:
             continue
 
-        normalized.append({"name": name, "sheet_names": group_sheet_names})
+        internal_name = name
+        suffix = 1
+        while internal_name in used_internal_names:
+            internal_name = f"{name}__component_{suffix}"
+            suffix += 1
+
+        normalized.append({"name": name, "internal_name": internal_name, "sheet_names": group_sheet_names})
         seen_names.add(name)
+        used_internal_names.add(internal_name)
 
     return normalized
 
 
-def append_grouped_records(frame: pd.DataFrame, sheet_groups: list[dict[str, list[str]]]) -> pd.DataFrame:
+def append_grouped_records(frame: pd.DataFrame, sheet_groups: list[dict[str, object]]) -> pd.DataFrame:
     if frame.empty or not sheet_groups or "sheet_name" not in frame.columns:
         return frame
 
@@ -472,7 +478,7 @@ def append_grouped_records(frame: pd.DataFrame, sheet_groups: list[dict[str, lis
         group_rows = frame[frame["sheet_name"].isin(group["sheet_names"])].copy()
         if group_rows.empty:
             continue
-        group_rows["sheet_name"] = group["name"]
+        group_rows["sheet_name"] = group["internal_name"]
         grouped_frames.append(group_rows)
 
     if len(grouped_frames) == 1:
@@ -484,9 +490,9 @@ def get_component_sheet_names(sheets: dict[str, pd.DataFrame]) -> set[str]:
     meta = sheets.get("__meta__", {})
     raw_groups = meta.get("sheet_groups", []) if isinstance(meta, dict) else []
     return {
-        normalize_text(group.get("name"))
+        normalize_text(group.get("internal_name"))
         for group in raw_groups
-        if normalize_text(group.get("name"))
+        if normalize_text(group.get("internal_name"))
     }
 
 
@@ -499,7 +505,19 @@ def filter_out_component_rows(frame: pd.DataFrame, component_names: set[str]) ->
 def get_component_group_names_in_order(sheets: dict[str, pd.DataFrame]) -> list[str]:
     meta = sheets.get("__meta__", {})
     raw_groups = meta.get("sheet_groups", []) if isinstance(meta, dict) else []
-    return [normalize_text(group.get("name")) for group in raw_groups if normalize_text(group.get("name"))]
+    return [normalize_text(group.get("internal_name")) for group in raw_groups if normalize_text(group.get("internal_name"))]
+
+
+def get_component_display_name_map(sheets: dict[str, pd.DataFrame]) -> dict[str, str]:
+    meta = sheets.get("__meta__", {})
+    raw_groups = meta.get("sheet_groups", []) if isinstance(meta, dict) else []
+    mapping: dict[str, str] = {}
+    for group in raw_groups:
+        internal_name = normalize_text(group.get("internal_name"))
+        display_name = normalize_text(group.get("name"))
+        if internal_name and display_name:
+            mapping[internal_name] = display_name
+    return mapping
 
 
 def load_master_reference(master_file: Path) -> dict[str, dict[str, object]]:
@@ -1654,6 +1672,7 @@ def write_summary_by_site_workbook(summary_file: Path, sheets: dict[str, pd.Data
     source_names = sheets["SUMMARY_ALL"].get("sheet_name", pd.Series(dtype=object)).dropna().astype(str).tolist()
     component_names = get_component_sheet_names(sheets)
     ordered_component_names = get_component_group_names_in_order(sheets)
+    component_display_names = get_component_display_name_map(sheets)
     unique_source_names = list(dict.fromkeys(source_names))
     component_source_names = [name for name in ordered_component_names if name in unique_source_names]
     non_component_source_names = [name for name in unique_source_names if name not in component_names]
@@ -1667,7 +1686,8 @@ def write_summary_by_site_workbook(summary_file: Path, sheets: dict[str, pd.Data
         else:
             used_names: set[str] = set()
             for source_sheet_name in source_names:
-                safe_name = safe_sheet_name(source_sheet_name, used_names)
+                display_name = component_display_names.get(source_sheet_name, source_sheet_name)
+                safe_name = safe_sheet_name(display_name, used_names)
                 worksheet = writer.book.create_sheet(title=safe_name)
                 writer.sheets[safe_name] = worksheet
 
@@ -1727,6 +1747,7 @@ def write_component_summary_workbook(
     summary_file: Path | None = None,
 ) -> None:
     component_names = get_component_group_names_in_order(sheets)[: len(COMPONENT_IVI_START_ROWS)]
+    component_display_names = get_component_display_name_map(sheets)
     workbook = load_workbook(template_file)
     worksheet = workbook[workbook.sheetnames[0]]
     worksheet["C5"] = "10-30"
@@ -1737,11 +1758,12 @@ def write_component_summary_workbook(
     summary_workbook = load_workbook(summary_file, data_only=True) if summary_file and summary_file.exists() else None
 
     def find_summary_sheet_by_component_name(component_name: str):
+        display_name = component_display_names.get(component_name, component_name)
         if summary_workbook is None:
             return None
-        if component_name in summary_workbook.sheetnames:
-            return summary_workbook[component_name]
-        safe_name = safe_sheet_name(component_name, set())
+        if display_name in summary_workbook.sheetnames:
+            return summary_workbook[display_name]
+        safe_name = safe_sheet_name(display_name, set())
         if safe_name in summary_workbook.sheetnames:
             return summary_workbook[safe_name]
         for candidate_name in summary_workbook.sheetnames:
@@ -1937,7 +1959,7 @@ def write_component_summary_workbook(
         return pd.DataFrame(rows)
 
     def fill_ivi_block(component_name: str, title_row: int) -> None:
-        worksheet.cell(title_row, 2).value = component_name
+        worksheet.cell(title_row, 2).value = component_display_names.get(component_name, component_name)
         raw_frame = build_ivi_summary(component_name, sheets)
         frame = top_ivi_rows_from_summary_workbook(component_name)
         expected_rows = min(10, len(raw_frame.index))
@@ -1977,8 +1999,9 @@ def write_component_summary_workbook(
         biomass_map = biomass_summary_map(component_name)
         belowground_total = belowground_biomass_total(component_name)
         carbon_total = carbon_stock_total(component_name, belowground_total)
+        display_name = component_display_names.get(component_name, component_name)
 
-        worksheet.cell(density_row, 1).value = component_name
+        worksheet.cell(density_row, 1).value = display_name
         worksheet.cell(density_row, 2).value = species_count_from_tree(component_name)
         worksheet.cell(density_row, 3).value = density_map.get(("tree", "dbh 10-30"))
         worksheet.cell(density_row, 4).value = density_map.get(("tree", "dbh 30-60"))
@@ -1989,7 +2012,7 @@ def write_component_summary_workbook(
         worksheet.cell(density_row, 9).value = species_count_from_seedling(component_name)
         worksheet.cell(density_row, 10).value = block_density_per_rai(component_name, "seedling")
 
-        worksheet.cell(volume_row, 1).value = component_name
+        worksheet.cell(volume_row, 1).value = display_name
         worksheet.cell(volume_row, 2).value = tq_map.get("tq 1.1")
         worksheet.cell(volume_row, 3).value = tq_map.get("tq 1.2")
         worksheet.cell(volume_row, 4).value = tq_map.get("tq 1.3")
@@ -1997,17 +2020,17 @@ def write_component_summary_workbook(
         worksheet.cell(volume_row, 6).value = tq_map.get("tq 3")
         worksheet.cell(volume_row, 7).value = tq_map.get("total")
 
-        worksheet.cell(biomass_row, 1).value = component_name
+        worksheet.cell(biomass_row, 1).value = display_name
         worksheet.cell(biomass_row, 2).value = biomass_map.get("Ws_sum")
         worksheet.cell(biomass_row, 3).value = biomass_map.get("Wb_sum")
         worksheet.cell(biomass_row, 4).value = biomass_map.get("Wl_sum")
         worksheet.cell(biomass_row, 5).value = biomass_map.get("Wr_sum")
         worksheet.cell(biomass_row, 6).value = biomass_map.get("biomass_total_sum")
 
-        worksheet.cell(belowground_row, 1).value = component_name
+        worksheet.cell(belowground_row, 1).value = display_name
         worksheet.cell(belowground_row, 2).value = belowground_total
 
-        worksheet.cell(carbon_row, 1).value = component_name
+        worksheet.cell(carbon_row, 1).value = display_name
         worksheet.cell(carbon_row, 2).value = carbon_total
 
         fill_ivi_block(component_name, ivi_title_row)

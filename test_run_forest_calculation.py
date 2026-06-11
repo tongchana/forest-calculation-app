@@ -7,6 +7,30 @@ import run_forest_calculation as calc
 
 
 class ForestCalculationLogicTests(unittest.TestCase):
+    def test_component_name_can_match_existing_sheet_name(self):
+        groups = calc.normalize_sheet_groups(
+            [{"name": "SiteA", "sheet_names": ["SiteA", "SiteB"]}],
+            ["SiteA", "SiteB"],
+        )
+        self.assertEqual(groups[0]["name"], "SiteA")
+        self.assertNotEqual(groups[0]["internal_name"], "SiteA")
+
+    def test_grouped_records_use_internal_component_name_when_display_name_conflicts(self):
+        frame = pd.DataFrame(
+            [
+                {"sheet_name": "SiteA", "Species": "A"},
+                {"sheet_name": "SiteB", "Species": "B"},
+            ]
+        )
+        groups = calc.normalize_sheet_groups(
+            [{"name": "SiteA", "sheet_names": ["SiteA", "SiteB"]}],
+            ["SiteA", "SiteB"],
+        )
+        grouped = calc.append_grouped_records(frame, groups)
+        internal_name = groups[0]["internal_name"]
+        self.assertEqual(len(grouped[grouped["sheet_name"] == "SiteA"]), 1)
+        self.assertEqual(len(grouped[grouped["sheet_name"] == internal_name]), 2)
+
     def test_ivi_uses_total_sampled_area_and_correct_frequency(self):
         rows = [
             {"sheet_name": "SiteA", "Species": "A", "DBH (cm)": 10.0, "Girth (cm)": None, "Plot": "P1"},
