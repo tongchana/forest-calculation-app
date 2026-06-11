@@ -92,7 +92,7 @@ class ForestCalculationLogicTests(unittest.TestCase):
         self.assertAlmostEqual(float(summary.loc[0, "Shannon_index"]), expected)
         self.assertAlmostEqual(float(detail["Shannon contribution"].sum()), expected)
 
-    def test_sapling_volume_multiplies_by_number(self):
+    def test_sapling_volume_ignores_number_and_uses_one_record_per_stem(self):
         sapling_df = pd.DataFrame(
             [
                 {
@@ -114,8 +114,8 @@ class ForestCalculationLogicTests(unittest.TestCase):
             ref_map={"sapa": {"thai_standard": "SapA", "scientific_name": None, "group_id": 7}},
         )
         per_stem = calc.calculate_volume_from_dbh(10.0, 7)
-        self.assertAlmostEqual(float(detail.loc[0, "volume_m3"]), per_stem * 5)
-        self.assertAlmostEqual(float(summary.loc[0, "total_volume_m3"]), per_stem * 5)
+        self.assertAlmostEqual(float(detail.loc[0, "volume_m3"]), per_stem)
+        self.assertAlmostEqual(float(summary.loc[0, "total_volume_m3"]), per_stem)
 
     def test_unmatched_species_fall_back_to_group_7_volume(self):
         tree_df = pd.DataFrame(
@@ -172,8 +172,37 @@ class ForestCalculationLogicTests(unittest.TestCase):
         )
         row = summary_all.iloc[0]
         total_area_rai = 2 * 0.2 * 5.0
-        self.assertAlmostEqual(row["sapling_per_rai"], 20 / total_area_rai)
+        self.assertAlmostEqual(row["sapling_per_rai"], 2 / total_area_rai)
         self.assertAlmostEqual(row["seedling_per_rai"], 10 / total_area_rai)
+
+    def test_sapling_dbh_summary_counts_rows_not_number_values(self):
+        sheets = {
+            "DETAIL_VOLUME": pd.DataFrame(
+                [
+                    {
+                        "sheet_name": "SiteA",
+                        "block_type": "Sapling",
+                        "Girth_cm": 20.0,
+                        "Plot": "P1",
+                        "Number": 99,
+                    },
+                    {
+                        "sheet_name": "SiteA",
+                        "block_type": "Sapling",
+                        "Girth_cm": 40.0,
+                        "Plot": "P2",
+                        "Number": None,
+                    },
+                ]
+            ),
+            "DETAIL_SEEDLING": pd.DataFrame(columns=["sheet_name", "Plot", "Number"]),
+        }
+        summary = calc.build_dbh_class_summary("SiteA", sheets, plot_area_ha=0.2, rai_per_hectare=5.0)
+        sapling_rows = summary[summary["Block"] == "Sapling"].reset_index(drop=True)
+
+        self.assertEqual(float(sapling_rows.loc[0, "Total"]), 1.0)
+        self.assertEqual(float(sapling_rows.loc[1, "Total"]), 1.0)
+        self.assertEqual(float(sapling_rows.loc[3, "Total"]), 2.0)
 
 
 if __name__ == "__main__":

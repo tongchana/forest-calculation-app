@@ -726,9 +726,7 @@ def build_volume_outputs(tree_df: pd.DataFrame, sapling_df: pd.DataFrame, ref_ma
             group_id = ref["group_id"] if ref else 7
             per_stem_volume_m3 = calculate_volume_from_dbh(dbh_cm, group_id)
             if block_type == "Sapling":
-                raw_number = pd.to_numeric(pd.Series([row.get("Number")]), errors="coerce").iloc[0]
-                multiplier = float(raw_number) if pd.notna(raw_number) and float(raw_number) > 0 else 1.0
-                volume_m3 = per_stem_volume_m3 * multiplier if pd.notna(per_stem_volume_m3) else np.nan
+                volume_m3 = per_stem_volume_m3
             else:
                 volume_m3 = per_stem_volume_m3
             detail_records.append(
@@ -1176,7 +1174,7 @@ def build_dbh_class_summary(
     append_class_rows("Tree", tree_detail, None)
 
     sapling_detail = get_volume_detail_for_site(source_sheet_name, "Sapling", sheets)
-    append_class_rows("Sapling", sapling_detail, "Number")
+    append_class_rows("Sapling", sapling_detail, None)
 
     seedling_detail = sheets["DETAIL_SEEDLING"]
     if not seedling_detail.empty:
@@ -1288,7 +1286,7 @@ def build_summary_all(
         seedling_plot_count = (
             seedling_rows["Plot"].astype(str).str.strip().replace("", np.nan).dropna().nunique() if not seedling_rows.empty else 0
         )
-        sapling_total = pd.to_numeric(sapling_rows["Number"], errors="coerce").fillna(0).sum() if not sapling_rows.empty else 0.0
+        sapling_total = float(len(sapling_rows.index)) if not sapling_rows.empty else 0.0
         seedling_total = pd.to_numeric(seedling_rows["Number"], errors="coerce").fillna(0).sum() if not seedling_rows.empty else 0.0
         sapling_area_rai = sapling_plot_count * plot_area_ha * rai_per_hectare if sapling_plot_count else np.nan
         seedling_area_rai = seedling_plot_count * plot_area_ha * rai_per_hectare if seedling_plot_count else np.nan
@@ -1820,7 +1818,7 @@ def write_component_summary_workbook(
             frame = get_volume_detail_for_site(component_name, "Sapling", sheets)
             if frame.empty:
                 return None
-            total_number = pd.to_numeric(frame["Number"], errors="coerce").fillna(0).sum()
+            total_number = float(len(frame.index))
             plot_count = frame["Plot"].astype(str).str.strip().replace("", np.nan).dropna().nunique()
         elif block_key == "seedling":
             frame = sheets["DETAIL_SEEDLING"]
@@ -1834,7 +1832,7 @@ def write_component_summary_workbook(
         else:
             return None
 
-        if total_number == 0:
+        if block_key != "sapling" and total_number == 0:
             total_number = float(len(frame.index))
 
         total_area_rai = plot_count * plot_area_ha * rai_per_hectare if plot_count else np.nan
