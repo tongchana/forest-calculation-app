@@ -117,6 +117,34 @@ class ForestCalculationLogicTests(unittest.TestCase):
         self.assertAlmostEqual(float(detail.loc[0, "volume_m3"]), per_stem * 5)
         self.assertAlmostEqual(float(summary.loc[0, "total_volume_m3"]), per_stem * 5)
 
+    def test_unmatched_species_fall_back_to_group_7_volume(self):
+        tree_df = pd.DataFrame(
+            [
+                {
+                    "sheet_name": "SiteA",
+                    "row_no": 3,
+                    "No.": 1,
+                    "Species": "Unknown species",
+                    "DBH (cm)": 20.0,
+                    "Girth (cm)": None,
+                    "Height (m)": 8.0,
+                    "Plot": "P1",
+                    "TQ": 2,
+                }
+            ]
+        )
+        detail, summary, unmatched = calc.build_volume_outputs(
+            tree_df=tree_df,
+            sapling_df=pd.DataFrame(),
+            ref_map={},
+        )
+        expected = calc.calculate_volume_from_dbh(20.0, 7)
+        self.assertFalse(bool(detail.loc[0, "matched"]))
+        self.assertEqual(int(detail.loc[0, "group_id"]), 7)
+        self.assertAlmostEqual(float(detail.loc[0, "volume_m3"]), expected)
+        self.assertAlmostEqual(float(summary.loc[0, "total_volume_m3"]), expected)
+        self.assertEqual(len(unmatched), 1)
+
     def test_build_summary_all_uses_passed_area_values(self):
         sapling_df = pd.DataFrame(
             [

@@ -723,8 +723,8 @@ def build_volume_outputs(tree_df: pd.DataFrame, sapling_df: pd.DataFrame, ref_ma
             species_norm = normalize_species_name(species_raw)
             ref = ref_map.get(species_norm) if species_norm else None
             dbh_cm = get_dbh_cm(row.get("DBH (cm)"), row.get("Girth (cm)"))
-            group_id = ref["group_id"] if ref else np.nan
-            per_stem_volume_m3 = calculate_volume_from_dbh(dbh_cm, group_id) if ref else np.nan
+            group_id = ref["group_id"] if ref else 7
+            per_stem_volume_m3 = calculate_volume_from_dbh(dbh_cm, group_id)
             if block_type == "Sapling":
                 raw_number = pd.to_numeric(pd.Series([row.get("Number")]), errors="coerce").iloc[0]
                 multiplier = float(raw_number) if pd.notna(raw_number) and float(raw_number) > 0 else 1.0
