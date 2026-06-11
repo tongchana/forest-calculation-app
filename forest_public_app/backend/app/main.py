@@ -52,19 +52,46 @@ def format_metric_value(value: object, decimals: int = 2) -> str:
     return str(value)
 
 
-def build_metrics(summary_all: pd.DataFrame, unmatched: pd.DataFrame) -> list[MetricCard]:
+def filter_primary_rows(frame: pd.DataFrame, result_sheets: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    component_names = calc.get_component_sheet_names(result_sheets)
+    return calc.filter_out_component_rows(frame, component_names)
+
+
+def count_unmatched_species(unmatched: pd.DataFrame) -> int:
+    if unmatched.empty:
+        return 0
+
+    for column_name in ("Species_norm", "Species_raw"):
+        if column_name in unmatched.columns:
+            series = unmatched[column_name].astype(str).str.strip().replace("", pd.NA).dropna()
+            if not series.empty:
+                return int(series.nunique())
+
+    return int(len(unmatched.index))
+
+
+def build_metrics(
+    summary_all: pd.DataFrame,
+    unmatched: pd.DataFrame,
+    result_sheets: dict[str, pd.DataFrame],
+) -> list[MetricCard]:
     if summary_all.empty:
         return []
 
-    total_tree = pd.to_numeric(summary_all.get("n_tree"), errors="coerce").fillna(0).sum()
-    total_sapling = pd.to_numeric(summary_all.get("n_sapling"), errors="coerce").fillna(0).sum()
-    total_tree_biomass = pd.to_numeric(summary_all.get("total_tree_biomass"), errors="coerce").fillna(0).sum()
-    total_tree_volume = pd.to_numeric(summary_all.get("total_tree_volume_m3"), errors="coerce").fillna(0).sum()
-    total_sapling_volume = pd.to_numeric(summary_all.get("total_sapling_volume_m3"), errors="coerce").fillna(0).sum()
+    filtered_summary = filter_primary_rows(summary_all, result_sheets)
+    filtered_unmatched = filter_primary_rows(unmatched, result_sheets)
 
-    shannon_series = pd.to_numeric(summary_all.get("shannon_index"), errors="coerce")
+    total_tree = pd.to_numeric(filtered_summary.get("n_tree"), errors="coerce").fillna(0).sum()
+    total_sapling = pd.to_numeric(filtered_summary.get("n_sapling"), errors="coerce").fillna(0).sum()
+    total_tree_biomass = pd.to_numeric(filtered_summary.get("total_tree_biomass"), errors="coerce").fillna(0).sum()
+    total_tree_volume = pd.to_numeric(filtered_summary.get("total_tree_volume_m3"), errors="coerce").fillna(0).sum()
+    total_sapling_volume = pd.to_numeric(filtered_summary.get("total_sapling_volume_m3"), errors="coerce").fillna(0).sum()
+
+    shannon_series = pd.to_numeric(filtered_summary.get("shannon_index"), errors="coerce")
     shannon_value = shannon_series.mean() if shannon_series is not None and not shannon_series.dropna().empty else None
-    unmatched_count = len(unmatched.index) if not unmatched.empty else 0
+    unmatched_count = count_unmatched_species(filtered_unmatched)
 
     return [
         MetricCard(label="Total tree count", value=format_metric_value(total_tree, 0), help_text="Across all processed worksheets"),
@@ -73,7 +100,7 @@ def build_metrics(summary_all: pd.DataFrame, unmatched: pd.DataFrame) -> list[Me
         MetricCard(label="Total tree volume", value=format_metric_value(total_tree_volume, 3), help_text="Tree block volume"),
         MetricCard(label="Total sapling volume", value=format_metric_value(total_sapling_volume, 3), help_text="Sapling block volume"),
         MetricCard(label="Shannon index", value=format_metric_value(shannon_value, 6), help_text="Average across available sites"),
-        MetricCard(label="Unmatched species", value=format_metric_value(unmatched_count, 0), help_text="Still reviewed in the QA sheet"),
+        MetricCard(label="Unmatched species", value=format_metric_value(unmatched_count, 0), help_text="Unique unmatched species still reviewed in the QA sheet"),
     ]
 
 
@@ -232,7 +259,7 @@ async def calculate(
     unmatched = result_sheets.get("CHECK_UNMATCHED_SPECIES", pd.DataFrame())
 
     return {
-        "metrics": [metric.model_dump() for metric in build_metrics(summary_all, unmatched)],
+        "metrics": [metric.model_dump() for metric in build_metrics(summary_all, unmatched, result_sheets)],
         "previews": {
             "summaryAll": dataframe_records(summary_all),
             "summaryBiomass": dataframe_records(summary_biomass),
