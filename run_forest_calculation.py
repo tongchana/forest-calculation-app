@@ -13,7 +13,7 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 
-PLOT_AREA_HA = 0.4
+PLOT_AREA_HA = 0.1
 RAI_PER_HECTARE = 6.25
 PI = math.pi
 

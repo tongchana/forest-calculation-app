@@ -9,7 +9,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 
-PLOT_AREA_HA = 0.4
+PLOT_AREA_HA = 0.1
 RAI_PER_HECTARE = 6.25
 PI = 3.14
 

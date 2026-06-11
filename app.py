@@ -236,9 +236,13 @@ def load_binary_file(file_path: Path) -> bytes:
 def get_uploaded_sheet_names(uploaded_file) -> list[str]:
     workbook = load_workbook(filename=BytesIO(uploaded_file.getvalue()), read_only=True, data_only=True)
     try:
-        return [sheet_name for sheet_name in workbook.sheetnames if not calc.should_skip_sheet(sheet_name)]
+        return list(workbook.sheetnames)
     finally:
         workbook.close()
+
+
+def get_calculation_sheet_names(sheet_names: list[str]) -> list[str]:
+    return [sheet_name for sheet_name in sheet_names if not calc.should_skip_sheet(sheet_name)]
 
 
 def make_group_container(index: int) -> dict[str, list[str] | str]:
@@ -812,12 +816,18 @@ def main() -> None:
     if uploaded_file is not None:
         try:
             uploaded_sheet_names = get_uploaded_sheet_names(uploaded_file)
+            calculation_sheet_names = get_calculation_sheet_names(uploaded_sheet_names)
         except Exception:  # noqa: BLE001
             uploaded_sheet_names = []
+            calculation_sheet_names = []
             st.warning("The workbook was uploaded, but its worksheet list could not be previewed yet.")
         else:
             if uploaded_sheet_names:
-                selected_sheet_groups = render_sheet_group_builder(uploaded_sheet_names)
+                st.caption(f"Detected worksheets: {', '.join(uploaded_sheet_names)}")
+            if calculation_sheet_names:
+                selected_sheet_groups = render_sheet_group_builder(calculation_sheet_names)
+            elif uploaded_sheet_names:
+                st.info("This workbook was read successfully, but none of its worksheets are eligible for the main calculation workflow.")
     if selected_sheet_groups and not COMPONENT_TEMPLATE_FILE.exists():
         st.warning("The component summary template file 'forest_component_7.xlsx' is missing, so the extra component-summary download will not be available.")
 
