@@ -242,7 +242,7 @@ def get_uploaded_sheet_names(uploaded_file) -> list[str]:
 
 
 def get_calculation_sheet_names(sheet_names: list[str]) -> list[str]:
-    return [sheet_name for sheet_name in sheet_names if not calc.should_skip_sheet(sheet_name)]
+    return list(sheet_names)
 
 
 def make_group_container(index: int) -> dict[str, list[str] | str]:
@@ -826,8 +826,6 @@ def main() -> None:
                 st.caption(f"Detected worksheets: {', '.join(uploaded_sheet_names)}")
             if calculation_sheet_names:
                 selected_sheet_groups = render_sheet_group_builder(calculation_sheet_names)
-            elif uploaded_sheet_names:
-                st.info("This workbook was read successfully, but none of its worksheets are eligible for the main calculation workflow.")
     if selected_sheet_groups and not COMPONENT_TEMPLATE_FILE.exists():
         st.warning("The component summary template file 'forest_component_7.xlsx' is missing, so the extra component-summary download will not be available.")
 
