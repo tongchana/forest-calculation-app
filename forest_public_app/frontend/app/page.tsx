@@ -39,20 +39,6 @@ type SheetGroup = {
 };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
-const PREVIEW_TABS: Array<keyof PreviewMap> = [
-  "summaryAll",
-  "summaryBiomass",
-  "summaryVolume",
-  "summaryShannon",
-  "unmatchedSpecies",
-];
-const TAB_LABELS: Record<keyof PreviewMap, string> = {
-  summaryAll: "Master Summary",
-  summaryBiomass: "Biomass",
-  summaryVolume: "Volume",
-  summaryShannon: "Shannon + IVI",
-  unmatchedSpecies: "QA / Unmatched",
-};
 
 function base64ToBlob(base64: string): Blob {
   const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
@@ -85,6 +71,25 @@ function formatNumberInput(value: string) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function toNumber(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function formatMetricValue(value: unknown, decimals = 2) {
+  const num = toNumber(value);
+  return num.toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
 function SectionBadge({ children }: { children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center rounded-full border border-white/12 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-emerald-100/80">
@@ -100,7 +105,6 @@ export default function Page() {
   const [workbookFile, setWorkbookFile] = useState<File | null>(null);
   const [groups, setGroups] = useState<SheetGroup[]>([]);
   const [result, setResult] = useState<CalculationResponse | null>(null);
-  const [activeTab, setActiveTab] = useState<keyof PreviewMap>("summaryAll");
   const [busy, setBusy] = useState(false);
   const [inspectBusy, setInspectBusy] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -145,8 +149,39 @@ export default function Page() {
   }, []);
 
   const groupedSheets = useMemo(() => new Set(groups.flatMap((group) => group.sheetNames)), [groups]);
-  const currentRows = result?.previews[activeTab] ?? [];
-  const currentColumns = currentRows.length > 0 ? Object.keys(currentRows[0]) : [];
+  const dashboardRows = useMemo(() => {
+    if (!result) {
+      return [];
+    }
+
+    const componentNames = new Set(groups.map((group) => group.name.trim()).filter(Boolean));
+    const summaryRows = result.previews.summaryAll ?? [];
+
+    return summaryRows
+      .map((row) => {
+        const name = String(row.sheet_name ?? "Unknown");
+        return {
+          name,
+          isComponent: componentNames.has(name),
+          nTree: toNumber(row.n_tree),
+          nSapling: toNumber(row.n_sapling),
+          biomass: toNumber(row.total_tree_biomass),
+          treeVolume: toNumber(row.total_tree_volume_m3),
+          saplingVolume: toNumber(row.total_sapling_volume_m3),
+          seedling: toNumber(row.total_seedling_number),
+          bamboo: toNumber(row.total_bamboo_culm),
+          shannon: toNumber(row.shannon_index),
+          unmatchedTree: toNumber(row.n_unmatched_tree_species),
+          unmatchedSapling: toNumber(row.n_unmatched_sapling_species),
+        };
+      })
+      .sort((left, right) => {
+        if (left.isComponent !== right.isComponent) {
+          return left.isComponent ? -1 : 1;
+        }
+        return left.name.localeCompare(right.name);
+      });
+  }, [groups, result]);
 
   async function handleInspect(file: File) {
     setInspectBusy(true);
@@ -282,7 +317,6 @@ export default function Page() {
       }
       const data = (await response.json()) as CalculationResponse;
       setResult(data);
-      setActiveTab("summaryAll");
       setMessage("Calculation completed.");
     } catch (calcError) {
       setResult(null);
@@ -477,12 +511,6 @@ export default function Page() {
                   Upload the completed workbook to read the worksheet names before calculation.
                 </p>
               </div>
-              <a
-                className="inline-flex items-center justify-center rounded-full bg-emerald-950 px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5"
-                href={`${API_BASE_URL}/api/template`}
-              >
-                Download template
-              </a>
             </div>
 
             <label
@@ -757,9 +785,9 @@ export default function Page() {
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Step 5</p>
-                <h3 className="mt-3 font-display text-3xl text-emerald-950">Preview the results before export</h3>
+                <h3 className="mt-3 font-display text-3xl text-emerald-950">Result dashboard</h3>
                 <p className="mt-3 max-w-3xl text-sm leading-8 text-slate-600">
-                  Review the summary cards and preview tables before downloading the output workbooks.
+                  Review the summary dashboard for each component or worksheet before downloading the output workbooks.
                 </p>
               </div>
             </div>
@@ -776,50 +804,68 @@ export default function Page() {
                   ))}
                 </div>
 
-                <div className="mt-8 flex flex-wrap gap-3">
-                  {PREVIEW_TABS.map((tabKey) => (
-                    <button
-                      key={tabKey}
-                      className={`rounded-full px-4 py-2 text-sm font-semibold transition hover:-translate-y-0.5 ${
-                        activeTab === tabKey
-                          ? "bg-emerald-950 text-white"
-                          : "bg-slate-100 text-slate-700 hover:bg-emerald-50 hover:text-emerald-950"
-                      }`}
-                      type="button"
-                      onClick={() => setActiveTab(tabKey)}
-                    >
-                      {TAB_LABELS[tabKey]}
-                    </button>
-                  ))}
-                </div>
+                <div className="mt-8 grid gap-5 xl:grid-cols-2">
+                  {dashboardRows.length > 0 ? (
+                    dashboardRows.map((row) => (
+                      <article
+                        key={row.name}
+                        className="rounded-[30px] border border-emerald-950/8 bg-[linear-gradient(180deg,#fbfefb,#f3f9f4)] p-5 shadow-sm"
+                      >
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+                              {row.isComponent ? "Component" : "Worksheet"}
+                            </p>
+                            <h4 className="mt-2 font-display text-3xl text-emerald-950">{row.name}</h4>
+                          </div>
+                          <div className="rounded-full bg-emerald-950 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-white">
+                            {row.isComponent ? "Grouped" : "Single"}
+                          </div>
+                        </div>
 
-                <div className="mt-6 overflow-hidden rounded-[28px] border border-emerald-950/8 bg-white">
-                  {currentRows.length === 0 ? (
-                    <div className="px-6 py-10 text-sm leading-8 text-slate-600">No preview rows are available for this result tab.</div>
+                        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                          <div className="rounded-[22px] bg-white p-4 ring-1 ring-emerald-950/8">
+                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Tree biomass</p>
+                            <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.biomass, 2)}</p>
+                          </div>
+                          <div className="rounded-[22px] bg-white p-4 ring-1 ring-emerald-950/8">
+                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Tree volume (m3)</p>
+                            <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.treeVolume, 3)}</p>
+                          </div>
+                          <div className="rounded-[22px] bg-white p-4 ring-1 ring-emerald-950/8">
+                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Sapling volume (m3)</p>
+                            <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.saplingVolume, 3)}</p>
+                          </div>
+                          <div className="rounded-[22px] bg-white p-4 ring-1 ring-emerald-950/8">
+                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Shannon index</p>
+                            <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.shannon, 6)}</p>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                          <div className="rounded-[20px] bg-emerald-50 px-4 py-3">
+                            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Trees</p>
+                            <p className="mt-2 text-lg font-semibold text-emerald-950">{formatMetricValue(row.nTree, 0)}</p>
+                          </div>
+                          <div className="rounded-[20px] bg-emerald-50 px-4 py-3">
+                            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Saplings</p>
+                            <p className="mt-2 text-lg font-semibold text-emerald-950">{formatMetricValue(row.nSapling, 0)}</p>
+                          </div>
+                          <div className="rounded-[20px] bg-emerald-50 px-4 py-3">
+                            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Unmatched species</p>
+                            <p className="mt-2 text-lg font-semibold text-emerald-950">
+                              {formatMetricValue(row.unmatchedTree + row.unmatchedSapling, 0)}
+                            </p>
+                          </div>
+                        </div>
+                      </article>
+                    ))
                   ) : (
-                    <div className="max-h-[540px] overflow-auto">
-                      <table className="min-w-full border-collapse text-left text-sm">
-                        <thead className="sticky top-0 bg-[#eff6f0] text-slate-700">
-                          <tr>
-                            {currentColumns.map((column) => (
-                              <th key={column} className="border-b border-emerald-950/8 px-4 py-3 font-semibold">
-                                {column}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {currentRows.map((row, rowIndex) => (
-                            <tr key={rowIndex} className="odd:bg-white even:bg-[#fafcfb]">
-                              {currentColumns.map((column) => (
-                                <td key={column} className="border-b border-emerald-950/6 px-4 py-3 align-top text-slate-700">
-                                  {String(row[column] ?? "")}
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                    <div className="rounded-[28px] border border-dashed border-emerald-950/12 bg-[#f7faf7] p-10 text-center">
+                      <p className="font-display text-2xl text-emerald-950">No dashboard data yet</p>
+                      <p className="mx-auto mt-3 max-w-2xl text-sm leading-8 text-slate-600">
+                        Run the calculation to build a dashboard for each component or worksheet.
+                      </p>
                     </div>
                   )}
                 </div>
