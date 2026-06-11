@@ -1,6 +1,7 @@
 "use client";
 
-import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type MetricCard = {
   label: string;
@@ -86,7 +87,7 @@ function formatNumberInput(value: string) {
 
 function SectionBadge({ children }: { children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center rounded-full border border-white/10 bg-white/8 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-emerald-100/80">
+    <span className="inline-flex items-center rounded-full border border-white/12 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-emerald-100/80">
       {children}
     </span>
   );
@@ -102,8 +103,10 @@ export default function Page() {
   const [activeTab, setActiveTab] = useState<keyof PreviewMap>("summaryAll");
   const [busy, setBusy] = useState(false);
   const [inspectBusy, setInspectBusy] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     async function loadConfig() {
@@ -117,10 +120,28 @@ export default function Page() {
           setRaiPerHectare(data.raiPerHectare);
         }
       } catch {
-        // Keep local defaults if the API is not reachable during first paint.
+        // Keep defaults when config is not available on first load.
       }
     }
     void loadConfig();
+  }, []);
+
+  useEffect(() => {
+    const items = Array.from(document.querySelectorAll<HTMLElement>("[data-reveal]"));
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("reveal-visible");
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.14 },
+    );
+
+    items.forEach((item) => observer.observe(item));
+    return () => observer.disconnect();
   }, []);
 
   const groupedSheets = useMemo(() => new Set(groups.flatMap((group) => group.sheetNames)), [groups]);
@@ -148,7 +169,7 @@ export default function Page() {
       const data = (await response.json()) as { sheetNames: string[] };
       setSheetNames(data.sheetNames ?? []);
       setGroups([]);
-      setMessage(`Detected ${data.sheetNames.length} worksheet(s). You can keep them separate or build grouped components before calculating.`);
+      setMessage(`Detected ${data.sheetNames.length} worksheet(s).`);
     } catch (inspectError) {
       setSheetNames([]);
       setGroups([]);
@@ -158,18 +179,44 @@ export default function Page() {
     }
   }
 
-  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0] ?? null;
-    setWorkbookFile(file);
-    if (file) {
-      void handleInspect(file);
-      return;
-    }
+  function resetFileState() {
     setSheetNames([]);
     setGroups([]);
     setResult(null);
     setMessage(null);
     setError(null);
+  }
+
+  function handleWorkbookFile(file: File | null) {
+    setWorkbookFile(file);
+    if (file) {
+      void handleInspect(file);
+      return;
+    }
+    resetFileState();
+  }
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    handleWorkbookFile(event.target.files?.[0] ?? null);
+  }
+
+  function handleDrop(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    setDragActive(false);
+    const file = event.dataTransfer.files?.[0] ?? null;
+    if (file) {
+      handleWorkbookFile(file);
+    }
+  }
+
+  function handleDragOver(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    setDragActive(true);
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    setDragActive(false);
   }
 
   function addGroup() {
@@ -236,7 +283,7 @@ export default function Page() {
       const data = (await response.json()) as CalculationResponse;
       setResult(data);
       setActiveTab("summaryAll");
-      setMessage("Calculation completed. Review the live previews below and download the workbook outputs when ready.");
+      setMessage("Calculation completed.");
     } catch (calcError) {
       setResult(null);
       setError(calcError instanceof Error ? calcError.message : "Calculation failed.");
@@ -248,12 +295,11 @@ export default function Page() {
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(65,169,123,0.18),_transparent_24%),radial-gradient(circle_at_82%_10%,_rgba(255,191,92,0.14),_transparent_18%),linear-gradient(180deg,_#071711_0%,_#091d15_20%,_#eef5ef_20%,_#f8fbf8_100%)] text-slate-900">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-10 px-4 pb-16 pt-4 sm:px-6 lg:px-8">
-        <section className="glass-panel overflow-hidden px-5 py-5 sm:px-8 sm:py-8">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_0%_0%,rgba(255,255,255,0.16),transparent_26%),radial-gradient(circle_at_100%_0%,rgba(255,191,92,0.16),transparent_24%)]" />
-          <div className="relative z-10 flex flex-col gap-10">
-            <div className="flex flex-col gap-4 border-b border-white/10 pb-6 lg:flex-row lg:items-center lg:justify-between">
+        <header className="sticky top-4 z-30" data-reveal>
+          <div className="rounded-[24px] border border-white/10 bg-[rgba(8,31,22,0.82)] px-4 py-3 shadow-[0_20px_60px_rgba(4,19,12,0.18)] backdrop-blur">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.3)] backdrop-blur">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.3)]">
                   <div className="h-5 w-5 rounded-[7px_7px_2px_7px] bg-gradient-to-br from-lime-200 via-emerald-300 to-emerald-500" />
                 </div>
                 <div>
@@ -261,102 +307,122 @@ export default function Page() {
                   <h1 className="font-display text-xl text-white sm:text-2xl">Field-to-report workspace</h1>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-3">
-                <a
-                  className="inline-flex items-center justify-center rounded-full border border-white/15 bg-white/10 px-5 py-3 text-sm font-semibold text-white transition hover:-translate-y-0.5 hover:bg-white/16"
-                  href={`${API_BASE_URL}/api/template`}
+
+              <div className="flex flex-wrap items-center gap-3 text-sm font-semibold">
+                <details className="group relative">
+                  <summary className="list-none rounded-full border border-white/12 bg-white/10 px-4 py-3 text-white transition hover:bg-white/16">
+                    <span className="inline-flex items-center gap-2">
+                      Resources
+                      <span className="transition group-open:rotate-180">v</span>
+                    </span>
+                  </summary>
+                  <div className="absolute right-0 mt-3 min-w-56 rounded-3xl border border-white/10 bg-[#0f2c1f] p-3 text-white shadow-2xl">
+                    <a
+                      className="block rounded-2xl px-4 py-3 transition hover:bg-white/10"
+                      href={`${API_BASE_URL}/api/template`}
+                    >
+                      Workbook template
+                    </a>
+                    <Link className="block rounded-2xl px-4 py-3 transition hover:bg-white/10" href="/detail">
+                      Calculation detail
+                    </Link>
+                  </div>
+                </details>
+
+                <Link
+                  className="rounded-full border border-white/12 bg-white/10 px-4 py-3 text-white transition hover:bg-white/16"
+                  href="/detail"
                 >
-                  Download official template
-                </a>
+                  Detail
+                </Link>
                 <a
-                  className="inline-flex items-center justify-center rounded-full bg-white px-5 py-3 text-sm font-semibold text-emerald-950 shadow-lg shadow-emerald-950/20 transition hover:-translate-y-0.5"
+                  className="rounded-full bg-white px-5 py-3 text-emerald-950 shadow-lg shadow-emerald-950/20 transition hover:-translate-y-0.5"
                   href="#workspace"
                 >
                   Open workspace
                 </a>
               </div>
             </div>
+          </div>
+        </header>
 
-            <div className="grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
-              <div className="space-y-7">
-                <SectionBadge>Forest survey workflow</SectionBadge>
-                <div className="max-w-4xl space-y-5">
-                  <h2 className="font-display text-5xl leading-[0.92] tracking-[-0.05em] text-white sm:text-6xl lg:text-7xl">
-                    Upload your field workbook, calculate, and download the results in one place.
-                  </h2>
-                  <p className="max-w-2xl text-base leading-8 text-emerald-50/82 sm:text-lg">
-                    Review worksheets, group related sheets when needed, run the calculation, and export the output files.
-                  </p>
-                </div>
+        <section className="glass-panel overflow-hidden px-5 py-8 sm:px-8 sm:py-10 reveal-section" data-reveal>
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_0%_0%,rgba(255,255,255,0.16),transparent_26%),radial-gradient(circle_at_100%_0%,rgba(255,191,92,0.16),transparent_24%)]" />
+          <div className="relative z-10 grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
+            <div className="space-y-7">
+              <SectionBadge>Forest survey workflow</SectionBadge>
+              <div className="max-w-4xl space-y-5">
+                <h2 className="font-display text-5xl leading-[0.92] tracking-[-0.05em] text-white sm:text-6xl lg:text-7xl">
+                  Upload your field workbook, calculate, and download the results in one place.
+                </h2>
+                <p className="max-w-2xl text-base leading-8 text-emerald-50/82 sm:text-lg">
+                  Review worksheets, group related sheets when needed, run the calculation, and export the output files.
+                </p>
+              </div>
 
-                <div className="grid gap-4 sm:grid-cols-3">
-                  <div className="rounded-[28px] border border-white/10 bg-white/8 p-5 backdrop-blur">
-                    <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-100/60">Step 1</p>
-                    <p className="mt-3 font-display text-2xl text-white">Upload</p>
-                    <p className="mt-2 text-sm leading-7 text-emerald-50/72">Upload the completed workbook and let the system detect every worksheet.</p>
+              <div className="grid gap-4 sm:grid-cols-3">
+                {[
+                  ["Step 1", "Upload", "Upload the completed workbook and let the system detect every worksheet."],
+                  ["Step 2", "Calculate", "Set the plot values, optionally group sheets, then run the calculation."],
+                  ["Step 3", "Download", "Preview the results on screen and download summary, detail, or component workbooks."],
+                ].map(([eyebrow, title, body]) => (
+                  <div key={title} className="rounded-[28px] border border-white/10 bg-white/8 p-5 backdrop-blur">
+                    <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-100/60">{eyebrow}</p>
+                    <p className="mt-3 font-display text-2xl text-white">{title}</p>
+                    <p className="mt-2 text-sm leading-7 text-emerald-50/72">{body}</p>
                   </div>
-                  <div className="rounded-[28px] border border-white/10 bg-white/8 p-5 backdrop-blur">
-                    <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-100/60">Step 2</p>
-                    <p className="mt-3 font-display text-2xl text-white">Calculate</p>
-                    <p className="mt-2 text-sm leading-7 text-emerald-50/72">Set the plot values, optionally group sheets, then run the calculation.</p>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-4">
+              <div className="relative overflow-hidden rounded-[32px] border border-white/10 bg-[#f5f8f3] p-6 text-slate-900 shadow-2xl shadow-black/20">
+                <div className="absolute right-0 top-0 h-40 w-40 rounded-full bg-emerald-200/40 blur-3xl" />
+                <div className="relative space-y-5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Workflow snapshot</p>
+                      <h3 className="mt-2 font-display text-2xl text-emerald-950">Simple workflow</h3>
+                    </div>
+                    <div className="rounded-full bg-emerald-950 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-emerald-50">
+                      Ready
+                    </div>
                   </div>
-                  <div className="rounded-[28px] border border-white/10 bg-white/8 p-5 backdrop-blur">
-                    <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-100/60">Step 3</p>
-                    <p className="mt-3 font-display text-2xl text-white">Download</p>
-                    <p className="mt-2 text-sm leading-7 text-emerald-50/72">Preview the results on screen and download summary, detail, or component workbooks.</p>
+
+                  <div className="grid gap-3">
+                    {[
+                      "Upload a completed field workbook",
+                      "Inspect every worksheet before processing",
+                      "Create optional grouped components for combined outputs",
+                      "Run biomass, volume, IVI, and Shannon calculations",
+                      "Preview results and export workbook packages",
+                    ].map((step, index) => (
+                      <div key={step} className="flex items-start gap-4 rounded-2xl border border-emerald-950/8 bg-white/80 p-4">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-100 font-semibold text-emerald-950">
+                          0{index + 1}
+                        </div>
+                        <p className="pt-1 text-sm leading-7 text-slate-700">{step}</p>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
 
-              <div className="flex flex-col gap-4">
-                <div className="relative overflow-hidden rounded-[32px] border border-white/10 bg-[#f5f8f3] p-6 text-slate-900 shadow-2xl shadow-black/20">
-                  <div className="absolute right-0 top-0 h-40 w-40 rounded-full bg-emerald-200/40 blur-3xl" />
-                  <div className="relative space-y-5">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Workflow snapshot</p>
-                        <h3 className="mt-2 font-display text-2xl text-emerald-950">Simple workflow</h3>
-                      </div>
-                      <div className="rounded-full bg-emerald-950 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-emerald-50">
-                        Ready
-                      </div>
-                    </div>
-
-                    <div className="grid gap-3">
-                      {[
-                        "Upload a completed field workbook",
-                        "Inspect every worksheet before processing",
-                        "Create optional grouped components for combined outputs",
-                        "Run biomass, volume, IVI, and Shannon calculations",
-                        "Preview results and export workbook packages",
-                      ].map((step, index) => (
-                        <div key={step} className="flex items-start gap-4 rounded-2xl border border-emerald-950/8 bg-white/80 p-4">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-100 font-semibold text-emerald-950">
-                            0{index + 1}
-                          </div>
-                          <p className="pt-1 text-sm leading-7 text-slate-700">{step}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="rounded-[28px] border border-white/10 bg-white/8 p-5 text-white backdrop-blur">
+                  <p className="text-xs font-semibold uppercase tracking-[0.26em] text-emerald-100/65">Workbook</p>
+                  <p className="mt-3 text-sm leading-7 text-emerald-50/78">Use the official template, fill in the field data, then upload the completed file here.</p>
                 </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="rounded-[28px] border border-white/10 bg-white/8 p-5 text-white backdrop-blur">
-                    <p className="text-xs font-semibold uppercase tracking-[0.26em] text-emerald-100/65">Workbook</p>
-                    <p className="mt-3 text-sm leading-7 text-emerald-50/78">Use the official template, fill in the field data, then upload the completed file here.</p>
-                  </div>
-                  <div className="rounded-[28px] border border-white/10 bg-white/8 p-5 text-white backdrop-blur">
-                    <p className="text-xs font-semibold uppercase tracking-[0.26em] text-emerald-100/65">Output</p>
-                    <p className="mt-3 text-sm leading-7 text-emerald-50/78">Review the preview tables first, then download the workbooks you want to keep.</p>
-                  </div>
+                <div className="rounded-[28px] border border-white/10 bg-white/8 p-5 text-white backdrop-blur">
+                  <p className="text-xs font-semibold uppercase tracking-[0.26em] text-emerald-100/65">Output</p>
+                  <p className="mt-3 text-sm leading-7 text-emerald-50/78">Review the preview tables first, then download the workbooks you want to keep.</p>
                 </div>
               </div>
             </div>
           </div>
         </section>
 
-        <section className="grid gap-5 lg:grid-cols-[0.95fr_1.05fr]" id="workspace">
+        <section className="grid gap-5 lg:grid-cols-[0.95fr_1.05fr] reveal-section" data-reveal id="workspace">
           <article className="rounded-[32px] border border-emerald-950/8 bg-white/80 p-6 shadow-[0_24px_80px_rgba(12,32,22,0.08)] backdrop-blur sm:p-7">
             <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Overview</p>
             <h3 className="mt-4 font-display text-3xl text-emerald-950">Everything you need for one calculation run.</h3>
@@ -375,9 +441,7 @@ export default function Page() {
               <div className="rounded-[26px] bg-[#f7fbf7] p-5 ring-1 ring-emerald-950/6">
                 <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Detected sheets</p>
                 <p className="mt-3 font-display text-2xl text-emerald-950">{sheetNames.length}</p>
-                <p className="mt-2 text-sm leading-7 text-slate-600">
-                  Every uploaded worksheet stays visible so the user can decide what belongs in a grouped component.
-                </p>
+                <p className="mt-2 text-sm leading-7 text-slate-600">All uploaded worksheet names stay visible after inspection.</p>
               </div>
             </div>
           </article>
@@ -403,7 +467,7 @@ export default function Page() {
           </article>
         </section>
 
-        <section className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
+        <section className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr] reveal-section" data-reveal>
           <article className="rounded-[32px] border border-emerald-950/8 bg-white/80 p-6 shadow-[0_24px_80px_rgba(12,32,22,0.08)] backdrop-blur sm:p-7">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
               <div>
@@ -421,15 +485,36 @@ export default function Page() {
               </a>
             </div>
 
-            <label className="mt-7 block cursor-pointer rounded-[30px] border border-dashed border-emerald-500/40 bg-[linear-gradient(180deg,#fdfefd,#f3f8f4)] p-8 text-center transition hover:border-emerald-700/45 hover:bg-[#f7fbf8]">
-              <input className="hidden" type="file" accept=".xlsx" onChange={handleFileChange} />
+            <label
+              className={`mt-7 block cursor-pointer rounded-[30px] border border-dashed p-8 text-center transition ${
+                dragActive
+                  ? "border-emerald-700 bg-emerald-50 shadow-[0_0_0_6px_rgba(16,87,59,0.08)]"
+                  : "border-emerald-500/40 bg-[linear-gradient(180deg,#fdfefd,#f3f8f4)] hover:border-emerald-700/45 hover:bg-[#f7fbf8]"
+              }`}
+              onDragLeave={handleDragLeave}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+            >
+              <input ref={fileInputRef} className="hidden" type="file" accept=".xlsx" onChange={handleFileChange} />
               <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-[22px] bg-emerald-100 text-emerald-900 shadow-inner">
                 <span className="text-2xl">+</span>
               </div>
-              <h4 className="mt-5 font-display text-2xl text-emerald-950">{workbookFile ? workbookFile.name : "Choose an .xlsx workbook"}</h4>
+              <h4 className="mt-5 font-display text-2xl text-emerald-950">
+                {workbookFile ? workbookFile.name : "Drop your workbook here or click to browse"}
+              </h4>
               <p className="mt-3 text-sm leading-7 text-slate-600">
-                Upload your completed template here. The app will inspect all worksheet names before you move into grouped components and calculations.
+                Drag and drop an .xlsx file here, or click anywhere in this area to choose a workbook.
               </p>
+              <button
+                className="mt-5 rounded-full bg-white px-5 py-3 text-sm font-semibold text-emerald-950 ring-1 ring-emerald-950/10 transition hover:-translate-y-0.5"
+                type="button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  fileInputRef.current?.click();
+                }}
+              >
+                Choose file
+              </button>
             </label>
 
             {inspectBusy && (
@@ -461,9 +546,7 @@ export default function Page() {
           <article className="rounded-[32px] border border-emerald-950/8 bg-[#fbfcfb] p-6 shadow-[0_24px_80px_rgba(12,32,22,0.08)] sm:p-7">
             <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Step 2</p>
             <h3 className="mt-3 font-display text-3xl text-emerald-950">Set run parameters</h3>
-            <p className="mt-3 text-sm leading-8 text-slate-600">
-              Leave the defaults as they are, or adjust them before calculating.
-            </p>
+            <p className="mt-3 text-sm leading-8 text-slate-600">Leave the defaults as they are, or adjust them before calculating.</p>
 
             <div className="mt-7 grid gap-4">
               <label className="rounded-[24px] border border-emerald-950/8 bg-white p-4 shadow-sm">
@@ -492,18 +575,16 @@ export default function Page() {
 
             <div className="mt-7 rounded-[26px] bg-emerald-950 px-5 py-5 text-emerald-50">
               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-emerald-200/70">Default values</p>
-              <p className="mt-3 text-sm leading-7 text-emerald-50/84">
-                The default plot area is set to 0.100 ha.
-              </p>
+              <p className="mt-3 text-sm leading-7 text-emerald-50/84">The default plot area is set to 0.100 ha.</p>
             </div>
           </article>
         </section>
 
-        <section className="rounded-[34px] border border-emerald-950/8 bg-white/82 p-6 shadow-[0_24px_80px_rgba(12,32,22,0.08)] backdrop-blur sm:p-8">
+        <section className="rounded-[34px] border border-emerald-950/8 bg-white/82 p-6 shadow-[0_24px_80px_rgba(12,32,22,0.08)] backdrop-blur sm:p-8 reveal-section" data-reveal>
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Step 3</p>
-              <h3 className="mt-3 font-display text-3xl text-emerald-950">Build grouped components with explicit sheet selection</h3>
+              <h3 className="mt-3 font-display text-3xl text-emerald-950">Build grouped components</h3>
               <p className="mt-3 max-w-3xl text-sm leading-8 text-slate-600">
                 Group multiple worksheets into one named component when you want a combined output workbook. A sheet can only belong to one component at a time.
               </p>
@@ -564,7 +645,7 @@ export default function Page() {
                               type="button"
                               onClick={() => toggleSheet(group.id, sheet)}
                             >
-                              {sheet} ×
+                              {sheet} x
                             </button>
                           ))
                         ) : (
@@ -607,7 +688,7 @@ export default function Page() {
           )}
         </section>
 
-        <section className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
+        <section className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr] reveal-section" data-reveal>
           <article className="rounded-[32px] border border-emerald-950/8 bg-[linear-gradient(145deg,#10281d,#173628)] p-6 text-white shadow-[0_28px_90px_rgba(9,26,17,0.28)] sm:p-7">
             <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-200/70">Step 4</p>
             <h3 className="mt-3 font-display text-4xl">Run calculation</h3>
@@ -640,18 +721,20 @@ export default function Page() {
           <article className="rounded-[32px] border border-emerald-950/8 bg-white/82 p-6 shadow-[0_24px_80px_rgba(12,32,22,0.08)] backdrop-blur sm:p-7">
             <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Status</p>
             <h3 className="mt-3 font-display text-3xl text-emerald-950">Run status</h3>
-            <p className="mt-3 text-sm leading-8 text-slate-600">
-              Check the current upload and calculation status here.
-            </p>
+            <p className="mt-3 text-sm leading-8 text-slate-600">Check the current upload and calculation status here.</p>
 
             <div className="mt-6 grid gap-4">
               <div className="rounded-[26px] border border-emerald-950/8 bg-[#f7faf7] p-5">
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Inspection</p>
-                <p className="mt-2 font-display text-2xl text-emerald-950">{inspectBusy ? "Reading workbook..." : workbookFile ? "Workbook ready" : "Waiting for upload"}</p>
+                <p className="mt-2 font-display text-2xl text-emerald-950">
+                  {inspectBusy ? "Reading workbook..." : workbookFile ? "Workbook ready" : "Waiting for upload"}
+                </p>
               </div>
               <div className="rounded-[26px] border border-emerald-950/8 bg-[#f7faf7] p-5">
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Calculation</p>
-                <p className="mt-2 font-display text-2xl text-emerald-950">{busy ? "Engine is running..." : result ? "Outputs generated" : "Not started yet"}</p>
+                <p className="mt-2 font-display text-2xl text-emerald-950">
+                  {busy ? "Engine is running..." : result ? "Outputs generated" : "Not started yet"}
+                </p>
               </div>
             </div>
 
@@ -669,7 +752,7 @@ export default function Page() {
           </article>
         </section>
 
-        <section className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]" id="results">
+        <section className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr] reveal-section" data-reveal id="results">
           <article className="rounded-[34px] border border-emerald-950/8 bg-white/84 p-6 shadow-[0_24px_80px_rgba(12,32,22,0.08)] backdrop-blur sm:p-8">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div>
@@ -712,9 +795,7 @@ export default function Page() {
 
                 <div className="mt-6 overflow-hidden rounded-[28px] border border-emerald-950/8 bg-white">
                   {currentRows.length === 0 ? (
-                    <div className="px-6 py-10 text-sm leading-8 text-slate-600">
-                      No preview rows are available for this result tab.
-                    </div>
+                    <div className="px-6 py-10 text-sm leading-8 text-slate-600">No preview rows are available for this result tab.</div>
                   ) : (
                     <div className="max-h-[540px] overflow-auto">
                       <table className="min-w-full border-collapse text-left text-sm">
@@ -745,20 +826,18 @@ export default function Page() {
               </>
             ) : (
               <div className="mt-7 rounded-[28px] border border-dashed border-emerald-950/12 bg-[#f7faf7] p-10 text-center">
-              <p className="font-display text-2xl text-emerald-950">No results yet</p>
-              <p className="mx-auto mt-3 max-w-2xl text-sm leading-8 text-slate-600">
+                <p className="font-display text-2xl text-emerald-950">No results yet</p>
+                <p className="mx-auto mt-3 max-w-2xl text-sm leading-8 text-slate-600">
                   Run the calculation to show summary cards, preview tables, and workbook downloads.
-              </p>
-            </div>
-          )}
+                </p>
+              </div>
+            )}
           </article>
 
           <aside className="rounded-[34px] border border-emerald-950/8 bg-[linear-gradient(180deg,#f7fbf8,#eff6f0)] p-6 shadow-[0_24px_80px_rgba(12,32,22,0.08)] sm:p-8">
             <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Outputs</p>
             <h3 className="mt-3 font-display text-3xl text-emerald-950">Download workbook packages</h3>
-            <p className="mt-3 text-sm leading-8 text-slate-600">
-              Download the summary, detail, and component workbooks after the calculation is complete.
-            </p>
+            <p className="mt-3 text-sm leading-8 text-slate-600">Download the summary, detail, and component workbooks after the calculation is complete.</p>
 
             <div className="mt-8 space-y-3">
               <button
