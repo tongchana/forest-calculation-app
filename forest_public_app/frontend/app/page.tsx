@@ -279,32 +279,31 @@ export default function Page() {
 
             <div className="grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
               <div className="space-y-7">
-                <SectionBadge>Next.js frontend + Python engine</SectionBadge>
+                <SectionBadge>Forest survey workflow</SectionBadge>
                 <div className="max-w-4xl space-y-5">
                   <h2 className="font-display text-5xl leading-[0.92] tracking-[-0.05em] text-white sm:text-6xl lg:text-7xl">
-                    A modern forest workflow that feels more like a product than a notebook.
+                    Upload your field workbook, calculate, and download the results in one place.
                   </h2>
                   <p className="max-w-2xl text-base leading-8 text-emerald-50/82 sm:text-lg">
-                    Upload finished field workbooks, shape grouped components, run the existing biomass and volume logic,
-                    and review the outputs inside a cleaner public-facing interface that is ready for deployment.
+                    Review worksheets, group related sheets when needed, run the calculation, and export the output files.
                   </p>
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-3">
                   <div className="rounded-[28px] border border-white/10 bg-white/8 p-5 backdrop-blur">
-                    <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-100/60">Experience</p>
-                    <p className="mt-3 font-display text-2xl text-white">Tailored UX</p>
-                    <p className="mt-2 text-sm leading-7 text-emerald-50/72">Tailwind-driven layout, stronger hierarchy, and more flexible interaction patterns.</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-100/60">Step 1</p>
+                    <p className="mt-3 font-display text-2xl text-white">Upload</p>
+                    <p className="mt-2 text-sm leading-7 text-emerald-50/72">Upload the completed workbook and let the system detect every worksheet.</p>
                   </div>
                   <div className="rounded-[28px] border border-white/10 bg-white/8 p-5 backdrop-blur">
-                    <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-100/60">Logic</p>
-                    <p className="mt-3 font-display text-2xl text-white">Trusted formulas</p>
-                    <p className="mt-2 text-sm leading-7 text-emerald-50/72">The backend still calls the same Python calculation workflow and workbook writers you already use.</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-100/60">Step 2</p>
+                    <p className="mt-3 font-display text-2xl text-white">Calculate</p>
+                    <p className="mt-2 text-sm leading-7 text-emerald-50/72">Set the plot values, optionally group sheets, then run the calculation.</p>
                   </div>
                   <div className="rounded-[28px] border border-white/10 bg-white/8 p-5 backdrop-blur">
-                    <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-100/60">Deployment</p>
-                    <p className="mt-3 font-display text-2xl text-white">Public-ready stack</p>
-                    <p className="mt-2 text-sm leading-7 text-emerald-50/72">Split frontend and backend so the app can move beyond Streamlit without losing calculation accuracy.</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-100/60">Step 3</p>
+                    <p className="mt-3 font-display text-2xl text-white">Download</p>
+                    <p className="mt-2 text-sm leading-7 text-emerald-50/72">Preview the results on screen and download summary, detail, or component workbooks.</p>
                   </div>
                 </div>
               </div>
@@ -316,10 +315,10 @@ export default function Page() {
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Workflow snapshot</p>
-                        <h3 className="mt-2 font-display text-2xl text-emerald-950">Ready-to-run project flow</h3>
+                        <h3 className="mt-2 font-display text-2xl text-emerald-950">Simple workflow</h3>
                       </div>
                       <div className="rounded-full bg-emerald-950 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-emerald-50">
-                        Live API
+                        Ready
                       </div>
                     </div>
 
@@ -344,12 +343,12 @@ export default function Page() {
 
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="rounded-[28px] border border-white/10 bg-white/8 p-5 text-white backdrop-blur">
-                    <p className="text-xs font-semibold uppercase tracking-[0.26em] text-emerald-100/65">Stack</p>
-                    <p className="mt-3 text-sm leading-7 text-emerald-50/78">Next.js for the public experience, Tailwind for interface control, and FastAPI for the Python bridge.</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.26em] text-emerald-100/65">Workbook</p>
+                    <p className="mt-3 text-sm leading-7 text-emerald-50/78">Use the official template, fill in the field data, then upload the completed file here.</p>
                   </div>
                   <div className="rounded-[28px] border border-white/10 bg-white/8 p-5 text-white backdrop-blur">
-                    <p className="text-xs font-semibold uppercase tracking-[0.26em] text-emerald-100/65">Goal</p>
-                    <p className="mt-3 text-sm leading-7 text-emerald-50/78">Move from utility screen to polished product surface without rewriting the core equations.</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.26em] text-emerald-100/65">Output</p>
+                    <p className="mt-3 text-sm leading-7 text-emerald-50/78">Review the preview tables first, then download the workbooks you want to keep.</p>
                   </div>
                 </div>
               </div>
@@ -360,10 +359,9 @@ export default function Page() {
         <section className="grid gap-5 lg:grid-cols-[0.95fr_1.05fr]" id="workspace">
           <article className="rounded-[32px] border border-emerald-950/8 bg-white/80 p-6 shadow-[0_24px_80px_rgba(12,32,22,0.08)] backdrop-blur sm:p-7">
             <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Overview</p>
-            <h3 className="mt-4 font-display text-3xl text-emerald-950">One calmer place for upload, grouping, previews, and exports.</h3>
+            <h3 className="mt-4 font-display text-3xl text-emerald-950">Everything you need for one calculation run.</h3>
             <p className="mt-4 max-w-xl text-sm leading-8 text-slate-600">
-              The page is organized like an operations room instead of a form. Visitors can understand the flow quickly,
-              then move from inspection to calculation without hunting across the interface.
+              Upload the workbook, check the detected sheets, adjust the settings, and export the result files from the same page.
             </p>
 
             <div className="mt-8 grid gap-4 sm:grid-cols-2">
@@ -385,18 +383,17 @@ export default function Page() {
           </article>
 
           <article className="rounded-[32px] border border-emerald-950/8 bg-[linear-gradient(145deg,#11291f,#183729)] p-6 text-white shadow-[0_28px_90px_rgba(9,26,17,0.28)] sm:p-7">
-            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-200/70">Deployment note</p>
-            <h3 className="mt-4 font-display text-3xl">This frontend is designed for real web deployment.</h3>
+            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-200/70">Before you start</p>
+            <h3 className="mt-4 font-display text-3xl">Prepare the workbook first.</h3>
             <p className="mt-4 max-w-xl text-sm leading-8 text-emerald-50/76">
-              Use Vercel for the Next.js frontend and Render, Railway, or Fly.io for the FastAPI backend. That gives you
-              a much stronger public experience than Streamlit while preserving the Python computation layer.
+              Fill in the survey data in the template, save the file, and upload the completed workbook here.
             </p>
 
             <div className="mt-8 grid gap-3">
               {[
-                "Frontend can ship independently from Python logic.",
-                "Animations and layout can evolve without touching formulas.",
-                "API responses already contain preview data and downloadable workbook payloads.",
+                "Use the official template file.",
+                "Check worksheet names after upload.",
+                "Create grouped components only when needed.",
               ].map((line) => (
                 <div key={line} className="rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-sm leading-7 text-emerald-50/82">
                   {line}
@@ -413,8 +410,7 @@ export default function Page() {
                 <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Step 1</p>
                 <h3 className="mt-3 font-display text-3xl text-emerald-950">Upload and inspect the workbook</h3>
                 <p className="mt-3 max-w-2xl text-sm leading-8 text-slate-600">
-                  Bring in the completed field workbook first. The API reads worksheet names immediately so the frontend can
-                  offer grouping and review before the actual calculation run.
+                  Upload the completed workbook to read the worksheet names before calculation.
                 </p>
               </div>
               <a
@@ -466,7 +462,7 @@ export default function Page() {
             <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Step 2</p>
             <h3 className="mt-3 font-display text-3xl text-emerald-950">Set run parameters</h3>
             <p className="mt-3 text-sm leading-8 text-slate-600">
-              Keep the default values if this workbook follows the standard workflow, or adjust them before you calculate.
+              Leave the defaults as they are, or adjust them before calculating.
             </p>
 
             <div className="mt-7 grid gap-4">
@@ -495,9 +491,9 @@ export default function Page() {
             </div>
 
             <div className="mt-7 rounded-[26px] bg-emerald-950 px-5 py-5 text-emerald-50">
-              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-emerald-200/70">Why this matters</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-emerald-200/70">Default values</p>
               <p className="mt-3 text-sm leading-7 text-emerald-50/84">
-                These values affect area-based scaling in the summary outputs. The defaults have already been aligned with your requested plot area of 0.100 ha.
+                The default plot area is set to 0.100 ha.
               </p>
             </div>
           </article>
@@ -509,7 +505,7 @@ export default function Page() {
               <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Step 3</p>
               <h3 className="mt-3 font-display text-3xl text-emerald-950">Build grouped components with explicit sheet selection</h3>
               <p className="mt-3 max-w-3xl text-sm leading-8 text-slate-600">
-                Group multiple worksheets into a named component when you want a combined output workbook in addition to normal per-sheet processing. A sheet can only belong to one component at a time.
+                Group multiple worksheets into one named component when you want a combined output workbook. A sheet can only belong to one component at a time.
               </p>
             </div>
             <button
@@ -526,7 +522,7 @@ export default function Page() {
             <div className="mt-7 rounded-[28px] border border-dashed border-emerald-950/12 bg-[#f7faf7] p-8 text-center">
               <p className="font-display text-2xl text-emerald-950">No grouped components yet</p>
               <p className="mx-auto mt-3 max-w-2xl text-sm leading-8 text-slate-600">
-                That is completely fine. If you do nothing here, the app will still calculate every uploaded worksheet normally. Add a component only when you want a deliberate grouped output.
+                That is fine. The app will still calculate every uploaded worksheet normally.
               </p>
             </div>
           ) : (
@@ -614,16 +610,16 @@ export default function Page() {
         <section className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
           <article className="rounded-[32px] border border-emerald-950/8 bg-[linear-gradient(145deg,#10281d,#173628)] p-6 text-white shadow-[0_28px_90px_rgba(9,26,17,0.28)] sm:p-7">
             <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-200/70">Step 4</p>
-            <h3 className="mt-3 font-display text-4xl">Run the Python calculation engine</h3>
+            <h3 className="mt-3 font-display text-4xl">Run calculation</h3>
             <p className="mt-4 max-w-2xl text-sm leading-8 text-emerald-50/78">
-              When you run the calculation, this frontend sends the workbook, plot configuration, and optional grouped components to FastAPI. The backend then reuses the existing biomass, volume, IVI, Shannon, and output workbook logic.
+              Start the calculation after the workbook, settings, and grouped components are ready.
             </p>
 
             <div className="mt-8 grid gap-3">
               {[
-                "Sheet-level processing still runs normally.",
-                "Component workbook is generated only when grouped sheets are provided.",
-                "Preview tables and metric cards return immediately with the response payload.",
+                "All uploaded worksheets are included in the run.",
+                "Component output is created only when grouped sheets are provided.",
+                "Preview tables appear after calculation finishes.",
               ].map((line) => (
                 <div key={line} className="rounded-2xl border border-white/10 bg-white/8 px-4 py-3 text-sm leading-7 text-emerald-50/82">
                   {line}
@@ -643,9 +639,9 @@ export default function Page() {
 
           <article className="rounded-[32px] border border-emerald-950/8 bg-white/82 p-6 shadow-[0_24px_80px_rgba(12,32,22,0.08)] backdrop-blur sm:p-7">
             <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Status</p>
-            <h3 className="mt-3 font-display text-3xl text-emerald-950">Live system feedback</h3>
+            <h3 className="mt-3 font-display text-3xl text-emerald-950">Run status</h3>
             <p className="mt-3 text-sm leading-8 text-slate-600">
-              The workspace reports inspection, calculation, and response status here so the user always knows what the app is doing.
+              Check the current upload and calculation status here.
             </p>
 
             <div className="mt-6 grid gap-4">
@@ -680,7 +676,7 @@ export default function Page() {
                 <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Step 5</p>
                 <h3 className="mt-3 font-display text-3xl text-emerald-950">Preview the results before export</h3>
                 <p className="mt-3 max-w-3xl text-sm leading-8 text-slate-600">
-                  The API returns metrics and preview tables so users can check high-level outcomes immediately instead of opening the workbook blind.
+                  Review the summary cards and preview tables before downloading the output workbooks.
                 </p>
               </div>
             </div>
@@ -749,19 +745,19 @@ export default function Page() {
               </>
             ) : (
               <div className="mt-7 rounded-[28px] border border-dashed border-emerald-950/12 bg-[#f7faf7] p-10 text-center">
-                <p className="font-display text-2xl text-emerald-950">No results yet</p>
-                <p className="mx-auto mt-3 max-w-2xl text-sm leading-8 text-slate-600">
-                  Run the calculation to unlock summary cards, preview tables, and workbook downloads.
-                </p>
-              </div>
-            )}
+              <p className="font-display text-2xl text-emerald-950">No results yet</p>
+              <p className="mx-auto mt-3 max-w-2xl text-sm leading-8 text-slate-600">
+                  Run the calculation to show summary cards, preview tables, and workbook downloads.
+              </p>
+            </div>
+          )}
           </article>
 
           <aside className="rounded-[34px] border border-emerald-950/8 bg-[linear-gradient(180deg,#f7fbf8,#eff6f0)] p-6 shadow-[0_24px_80px_rgba(12,32,22,0.08)] sm:p-8">
             <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Outputs</p>
             <h3 className="mt-3 font-display text-3xl text-emerald-950">Download workbook packages</h3>
             <p className="mt-3 text-sm leading-8 text-slate-600">
-              Summary, detail, and grouped-component workbooks are returned straight from the API response so users can download them immediately after calculation.
+              Download the summary, detail, and component workbooks after the calculation is complete.
             </p>
 
             <div className="mt-8 space-y-3">
@@ -792,9 +788,9 @@ export default function Page() {
             </div>
 
             <div className="mt-8 rounded-[28px] border border-emerald-950/8 bg-white/85 p-5">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Packaging strategy</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Tip</p>
               <p className="mt-3 text-sm leading-8 text-slate-600">
-                Keep this Next.js app as the public layer, then deploy the FastAPI service separately and connect them with the API base URL environment variable.
+                Use the preview first if you want to check the results before downloading the workbook files.
               </p>
             </div>
           </aside>
