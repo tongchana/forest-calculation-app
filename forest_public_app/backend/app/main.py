@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import sys
 import tempfile
 from io import BytesIO
@@ -28,6 +29,13 @@ OUTPUT_BASE_FILENAME = "forest_calculation_output.xlsx"
 SUMMARY_OUTPUT_FILENAME = "forest_calculation_output_summary_by_site.xlsx"
 DETAIL_OUTPUT_FILENAME = "forest_calculation_output_details.xlsx"
 COMPONENT_OUTPUT_FILENAME = "forest_component_summary.xlsx"
+
+
+def parse_cors_origins() -> list[str]:
+    raw_value = os.getenv("CORS_ORIGINS", "*").strip()
+    if not raw_value or raw_value == "*":
+        return ["*"]
+    return [origin.strip() for origin in raw_value.split(",") if origin.strip()]
 
 
 class MetricCard(BaseModel):
@@ -149,8 +157,8 @@ def run_uploaded_workflow(
 app = FastAPI(title="Forest Public App API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=parse_cors_origins(),
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

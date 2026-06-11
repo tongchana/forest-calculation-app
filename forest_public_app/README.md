@@ -94,6 +94,10 @@ If your deployment platform asks for install steps, use:
 pip install -r forest_public_app/backend/requirements.txt
 ```
 
+For a click-by-click setup guide, see:
+
+- [forest_public_app/DEPLOY.md](C:/tong/work/cal_Biomass/forest_public_app/DEPLOY.md)
+
 ## Current behavior
 
 - all uploaded worksheet names are visible to the user
