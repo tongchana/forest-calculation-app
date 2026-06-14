@@ -50,22 +50,24 @@ PLOT_PALETTE = [
 PROFILE_CROWN_WIDTH_SCALE = 1.18
 PROFILE_CROWN_HEIGHT_SCALE = 0.7
 SIDE_PADDING_METERS = 4.6
+THAI_FONT_FILES = [
+    Path(__file__).with_name("Sarabun-Regular.ttf"),
+    Path(__file__).with_name("NotoSansThai-Regular.ttf"),
+]
 
 
 def configure_matplotlib() -> None:
-    thai_font_candidates = [
-        "Noto Sans Thai",
-        "Sarabun",
-        "TH Sarabun New",
-        "Leelawadee UI",
-        "Tahoma",
-    ]
-    installed = {font.name for font in font_manager.fontManager.ttflist}
-    for font_name in thai_font_candidates:
-        if font_name in installed:
-            matplotlib.rcParams["font.family"] = font_name
-            break
+    for font_path in THAI_FONT_FILES:
+        if font_path.exists():
+            font_manager.fontManager.addfont(str(font_path))
     matplotlib.rcParams["axes.unicode_minus"] = False
+
+
+def get_thai_font_properties(size: float | None = None, weight: str | None = None) -> font_manager.FontProperties | None:
+    for font_path in THAI_FONT_FILES:
+        if font_path.exists():
+            return font_manager.FontProperties(fname=str(font_path), size=size, weight=weight)
+    return None
 
 
 def load_profile_sheet(excel_path: Path, sheet_name: str) -> pd.DataFrame:
@@ -315,7 +317,7 @@ def render_sheet_profile(excel_path: Path, sheet_name: str, output_dir: Path) ->
             markersize=6,
             markerfacecolor="black",
             markeredgecolor="black",
-            label="ตำแหน่งลำต้น",
+            label="\u0e15\u0e33\u0e41\u0e2b\u0e19\u0e48\u0e07\u0e25\u0e33\u0e15\u0e49\u0e19",
         )
     )
     legend_ax.axis("off")
@@ -323,9 +325,11 @@ def render_sheet_profile(excel_path: Path, sheet_name: str, output_dir: Path) ->
     axis_span = max(x_right - x_left, 1.0)
     legend_left = max((0 - x_left) / axis_span, 0.0)
     legend_width = min(40 / axis_span, 1.0 - legend_left)
+    legend_font = get_thai_font_properties(size=9.5)
+    legend_title_font = get_thai_font_properties(size=10.5, weight="bold")
     legend_ax.legend(
         handles=handles,
-        title=f"ชนิดพันธุ์ไม้ {sheet_name}",
+        title="\u0e0a\u0e19\u0e34\u0e14\u0e1e\u0e31\u0e19\u0e18\u0e38\u0e4c\u0e44\u0e21\u0e49",
         loc="center",
         mode="expand",
         ncol=5,
@@ -333,8 +337,8 @@ def render_sheet_profile(excel_path: Path, sheet_name: str, output_dir: Path) ->
         fancybox=True,
         framealpha=0.96,
         edgecolor="#d6d6d6",
-        fontsize=9.5,
-        title_fontsize=10.5,
+        prop=legend_font,
+        title_fontproperties=legend_title_font,
         columnspacing=1.0,
         handletextpad=0.5,
         borderpad=0.9,
