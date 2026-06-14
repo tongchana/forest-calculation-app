@@ -77,82 +77,6 @@ def count_unmatched_species(unmatched: pd.DataFrame) -> int:
     return int(len(unmatched.index))
 
 
-def get_tree_volume_per_rai(source_name: str, result_sheets: dict[str, pd.DataFrame]) -> float:
-    frame = calc.build_tq_volume_summary(
-        source_name,
-        result_sheets,
-        plot_area_ha=result_sheets["__meta__"]["plot_area_ha"],
-        rai_per_hectare=result_sheets["__meta__"]["rai_per_hectare"],
-    )
-    if frame.empty:
-        return 0.0
-
-    total_row = frame[
-        frame["Timber Quality Class (TQ)"].astype(str).str.strip().str.lower() == "total"
-    ]
-    if total_row.empty:
-        return 0.0
-
-    return float(pd.to_numeric(total_row["Per rai"], errors="coerce").fillna(0).sum())
-
-
-def get_sapling_volume_per_rai(source_name: str, result_sheets: dict[str, pd.DataFrame]) -> float:
-    frame = calc.get_volume_detail_for_site(source_name, "Sapling", result_sheets)
-    if frame.empty:
-        return 0.0
-
-    plot_count = frame["Plot"].astype(str).str.strip().replace("", pd.NA).dropna().nunique()
-    if not plot_count:
-        return 0.0
-
-    plot_area_ha = result_sheets["__meta__"]["plot_area_ha"]
-    rai_per_hectare = result_sheets["__meta__"]["rai_per_hectare"]
-    total_area_rai = plot_count * plot_area_ha * rai_per_hectare
-    total_volume = pd.to_numeric(frame["volume_m3"], errors="coerce").fillna(0).sum()
-    return float(calc.safe_divide(total_volume, total_area_rai) or 0.0)
-
-
-def build_dashboard_rows(result_sheets: dict[str, pd.DataFrame]) -> list[dict[str, Any]]:
-    summary_all = result_sheets.get("SUMMARY_ALL", pd.DataFrame())
-    unmatched = result_sheets.get("CHECK_UNMATCHED_SPECIES", pd.DataFrame())
-    if summary_all.empty:
-        return []
-
-    component_names = calc.get_component_sheet_names(result_sheets)
-    component_display_names = calc.get_component_display_name_map(result_sheets)
-    rows: list[dict[str, Any]] = []
-
-    for _, row in summary_all.iterrows():
-        source_name = str(row.get("sheet_name") or "").strip()
-        if not source_name:
-            continue
-
-        display_name = component_display_names.get(source_name, source_name)
-        unmatched_species_count = 0
-        if not unmatched.empty and "sheet_name" in unmatched.columns:
-            unmatched_species_count = count_unmatched_species(
-                unmatched[unmatched["sheet_name"].astype(str) == source_name].copy()
-            )
-
-        rows.append(
-            {
-                "name": display_name,
-                "sourceName": source_name,
-                "kind": "component" if source_name in component_names else "worksheet",
-                "treeBiomass": float(pd.to_numeric(pd.Series([row.get("total_tree_biomass")]), errors="coerce").fillna(0).iloc[0]),
-                "treeVolumePerRai": get_tree_volume_per_rai(source_name, result_sheets),
-                "saplingVolumePerRai": get_sapling_volume_per_rai(source_name, result_sheets),
-                "shannonIndex": float(pd.to_numeric(pd.Series([row.get("shannon_index")]), errors="coerce").fillna(0).iloc[0]),
-                "treeCount": int(pd.to_numeric(pd.Series([row.get("n_tree")]), errors="coerce").fillna(0).iloc[0]),
-                "saplingCount": int(pd.to_numeric(pd.Series([row.get("n_sapling")]), errors="coerce").fillna(0).iloc[0]),
-                "unmatchedSpecies": unmatched_species_count,
-            }
-        )
-
-    rows.sort(key=lambda item: (0 if item["kind"] == "component" else 1, item["name"]))
-    return rows
-
-
 def build_metrics(
     summary_all: pd.DataFrame,
     unmatched: pd.DataFrame,
@@ -394,7 +318,6 @@ async def calculate(
 
     return {
         "metrics": [metric.model_dump() for metric in build_metrics(summary_all, unmatched, result_sheets)],
-        "dashboardRows": build_dashboard_rows(result_sheets),
         "previews": {
             "summaryAll": dataframe_records(summary_all),
             "summaryBiomass": dataframe_records(summary_biomass),
