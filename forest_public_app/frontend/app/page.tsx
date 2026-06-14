@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
+import { API_BASE_URL, describeApiError } from "@/app/lib/api-base";
 
 type MetricCard = {
   label: string;
@@ -37,8 +38,6 @@ type SheetGroup = {
   name: string;
   sheetNames: string[];
 };
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 function base64ToBlob(base64: string): Blob {
   const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
@@ -207,7 +206,7 @@ export default function Page() {
     } catch (inspectError) {
       setSheetNames([]);
       setGroups([]);
-      setError(inspectError instanceof Error ? inspectError.message : "Could not inspect workbook.");
+      setError(describeApiError(inspectError));
     } finally {
       setInspectBusy(false);
     }
@@ -319,7 +318,7 @@ export default function Page() {
       setMessage("Calculation completed.");
     } catch (calcError) {
       setResult(null);
-      setError(calcError instanceof Error ? calcError.message : "Calculation failed.");
+      setError(describeApiError(calcError));
     } finally {
       setBusy(false);
     }
