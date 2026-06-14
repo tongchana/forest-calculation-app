@@ -64,6 +64,9 @@ If you want to allow more than one origin, separate them with commas:
 https://site-a.vercel.app,https://site-b.vercel.app
 ```
 
+This is still useful when you call the Render backend directly from a browser or another tool.
+The frontend app now prefers a same-origin `/api/...` rewrite on Vercel, which helps preview deployments avoid browser CORS failures.
+
 ## 2. Deploy the frontend on Vercel
 
 The frontend already includes `forest_public_app/frontend/vercel.json`.
@@ -85,6 +88,9 @@ forest_public_app/frontend
 ```bash
 NEXT_PUBLIC_API_BASE_URL=https://your-render-domain
 ```
+
+The frontend uses this value as the Vercel rewrite target for `/api/:path*`.
+Browser requests stay on the Vercel origin first, and Vercel forwards them to Render.
 
 7. Click `Deploy`
 
@@ -117,6 +123,9 @@ Example:
 ```bash
 CORS_ORIGINS=https://forest-public-app.vercel.app
 ```
+
+If you mainly use the Vercel frontend, the rewrite layer means preview URLs do not have to call Render directly from the browser.
+Still keep the production Vercel domain in `CORS_ORIGINS` so direct backend access remains safe and explicit.
 
 ## 4. Files used for deployment
 
