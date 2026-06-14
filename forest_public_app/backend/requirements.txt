@@ -4,3 +4,4 @@ python-multipart==0.0.20
 pandas
 openpyxl
 numpy
+matplotlib

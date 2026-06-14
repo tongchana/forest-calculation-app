@@ -8,6 +8,7 @@ import tempfile
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pandas as pd
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -21,14 +22,18 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 import run_forest_calculation as calc
+from cal_EIA.profile_diagram_lib import create_profile_template, render_workbook_profile_map
 
 TEMPLATE_FILE = ROOT_DIR / "template.xlsx"
 MASTER_FILE = ROOT_DIR / "species_reference_master_v1.xlsx"
 COMPONENT_TEMPLATE_FILE = ROOT_DIR / "forest_component_7.xlsx"
+PROFILE_SOURCE_FILE = ROOT_DIR / "cal_EIA" / "profile.xlsx"
+PROFILE_TEMPLATE_FILE = ROOT_DIR / "cal_EIA" / "profile_template.xlsx"
 OUTPUT_BASE_FILENAME = "forest_calculation_output.xlsx"
 SUMMARY_OUTPUT_FILENAME = "forest_calculation_output_summary_by_site.xlsx"
 DETAIL_OUTPUT_FILENAME = "forest_calculation_output_details.xlsx"
 COMPONENT_OUTPUT_FILENAME = "forest_component_summary.xlsx"
+PROFILE_OUTPUT_FILENAME = "profile_diagram_outputs.zip"
 
 
 def parse_cors_origins() -> list[str]:
@@ -70,6 +75,82 @@ def count_unmatched_species(unmatched: pd.DataFrame) -> int:
                 return int(series.nunique())
 
     return int(len(unmatched.index))
+
+
+def get_tree_volume_per_rai(source_name: str, result_sheets: dict[str, pd.DataFrame]) -> float:
+    frame = calc.build_tq_volume_summary(
+        source_name,
+        result_sheets,
+        plot_area_ha=result_sheets["__meta__"]["plot_area_ha"],
+        rai_per_hectare=result_sheets["__meta__"]["rai_per_hectare"],
+    )
+    if frame.empty:
+        return 0.0
+
+    total_row = frame[
+        frame["Timber Quality Class (TQ)"].astype(str).str.strip().str.lower() == "total"
+    ]
+    if total_row.empty:
+        return 0.0
+
+    return float(pd.to_numeric(total_row["Per rai"], errors="coerce").fillna(0).sum())
+
+
+def get_sapling_volume_per_rai(source_name: str, result_sheets: dict[str, pd.DataFrame]) -> float:
+    frame = calc.get_volume_detail_for_site(source_name, "Sapling", result_sheets)
+    if frame.empty:
+        return 0.0
+
+    plot_count = frame["Plot"].astype(str).str.strip().replace("", pd.NA).dropna().nunique()
+    if not plot_count:
+        return 0.0
+
+    plot_area_ha = result_sheets["__meta__"]["plot_area_ha"]
+    rai_per_hectare = result_sheets["__meta__"]["rai_per_hectare"]
+    total_area_rai = plot_count * plot_area_ha * rai_per_hectare
+    total_volume = pd.to_numeric(frame["volume_m3"], errors="coerce").fillna(0).sum()
+    return float(calc.safe_divide(total_volume, total_area_rai) or 0.0)
+
+
+def build_dashboard_rows(result_sheets: dict[str, pd.DataFrame]) -> list[dict[str, Any]]:
+    summary_all = result_sheets.get("SUMMARY_ALL", pd.DataFrame())
+    unmatched = result_sheets.get("CHECK_UNMATCHED_SPECIES", pd.DataFrame())
+    if summary_all.empty:
+        return []
+
+    component_names = calc.get_component_sheet_names(result_sheets)
+    component_display_names = calc.get_component_display_name_map(result_sheets)
+    rows: list[dict[str, Any]] = []
+
+    for _, row in summary_all.iterrows():
+        source_name = str(row.get("sheet_name") or "").strip()
+        if not source_name:
+            continue
+
+        display_name = component_display_names.get(source_name, source_name)
+        unmatched_species_count = 0
+        if not unmatched.empty and "sheet_name" in unmatched.columns:
+            unmatched_species_count = count_unmatched_species(
+                unmatched[unmatched["sheet_name"].astype(str) == source_name].copy()
+            )
+
+        rows.append(
+            {
+                "name": display_name,
+                "sourceName": source_name,
+                "kind": "component" if source_name in component_names else "worksheet",
+                "treeBiomass": float(pd.to_numeric(pd.Series([row.get("total_tree_biomass")]), errors="coerce").fillna(0).iloc[0]),
+                "treeVolumePerRai": get_tree_volume_per_rai(source_name, result_sheets),
+                "saplingVolumePerRai": get_sapling_volume_per_rai(source_name, result_sheets),
+                "shannonIndex": float(pd.to_numeric(pd.Series([row.get("shannon_index")]), errors="coerce").fillna(0).iloc[0]),
+                "treeCount": int(pd.to_numeric(pd.Series([row.get("n_tree")]), errors="coerce").fillna(0).iloc[0]),
+                "saplingCount": int(pd.to_numeric(pd.Series([row.get("n_sapling")]), errors="coerce").fillna(0).iloc[0]),
+                "unmatchedSpecies": unmatched_species_count,
+            }
+        )
+
+    rows.sort(key=lambda item: (0 if item["kind"] == "component" else 1, item["name"]))
+    return rows
 
 
 def build_metrics(
@@ -118,6 +199,41 @@ def get_uploaded_sheet_names(file_bytes: bytes) -> list[str]:
         return list(workbook.sheetnames)
     finally:
         workbook.close()
+
+
+def ensure_profile_template() -> Path:
+    if not PROFILE_SOURCE_FILE.exists():
+        raise HTTPException(status_code=500, detail="Profile source workbook is missing.")
+    if not PROFILE_TEMPLATE_FILE.exists():
+        create_profile_template(PROFILE_SOURCE_FILE, PROFILE_TEMPLATE_FILE)
+    return PROFILE_TEMPLATE_FILE
+
+
+def build_profile_outputs(uploaded_filename: str, file_bytes: bytes) -> tuple[list[dict[str, str]], bytes]:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        temp_dir = Path(tmp_dir)
+        uploaded_path = temp_dir / uploaded_filename
+        uploaded_path.write_bytes(file_bytes)
+
+        output_dir = temp_dir / "profile_images"
+        rendered_items = render_workbook_profile_map(uploaded_path, output_dir)
+        payloads: list[dict[str, str]] = []
+        image_paths: list[Path] = []
+        for sheet_name, image_path in rendered_items:
+            image_paths.append(image_path)
+            payloads.append(
+                {
+                    "sheetName": sheet_name,
+                    "filename": image_path.name,
+                    "contentBase64": base64.b64encode(image_path.read_bytes()).decode("ascii"),
+                }
+            )
+
+        zip_path = temp_dir / PROFILE_OUTPUT_FILENAME
+        with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as zip_file:
+            for image_path in image_paths:
+                zip_file.write(image_path, arcname=image_path.name)
+        return payloads, zip_path.read_bytes()
 
 
 def parse_sheet_groups(sheet_groups_raw: str | None) -> list[dict[str, object]] | None:
@@ -202,6 +318,7 @@ def config() -> dict[str, Any]:
         "plotAreaHa": calc.PLOT_AREA_HA,
         "raiPerHectare": calc.RAI_PER_HECTARE,
         "templateAvailable": TEMPLATE_FILE.exists(),
+        "profileTemplateAvailable": PROFILE_SOURCE_FILE.exists(),
         "masterAvailable": MASTER_FILE.exists(),
         "componentTemplateAvailable": COMPONENT_TEMPLATE_FILE.exists(),
     }
@@ -214,8 +331,25 @@ def template_download() -> FileResponse:
     return FileResponse(TEMPLATE_FILE, filename=TEMPLATE_FILE.name)
 
 
+@app.get("/api/profile/template")
+def profile_template_download() -> FileResponse:
+    template_path = ensure_profile_template()
+    return FileResponse(template_path, filename=template_path.name)
+
+
 @app.post("/api/inspect")
 async def inspect_workbook(file: UploadFile = File(...)) -> dict[str, Any]:
+    file_bytes = await file.read()
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Please upload a valid .xlsx file.")
+    return {
+        "fileName": file.filename,
+        "sheetNames": get_uploaded_sheet_names(file_bytes),
+    }
+
+
+@app.post("/api/profile/inspect")
+async def inspect_profile_workbook(file: UploadFile = File(...)) -> dict[str, Any]:
     file_bytes = await file.read()
     if not file.filename or not file.filename.lower().endswith(".xlsx"):
         raise HTTPException(status_code=400, detail="Please upload a valid .xlsx file.")
@@ -260,6 +394,7 @@ async def calculate(
 
     return {
         "metrics": [metric.model_dump() for metric in build_metrics(summary_all, unmatched, result_sheets)],
+        "dashboardRows": build_dashboard_rows(result_sheets),
         "previews": {
             "summaryAll": dataframe_records(summary_all),
             "summaryBiomass": dataframe_records(summary_biomass),
@@ -280,5 +415,26 @@ async def calculate(
                 "filename": COMPONENT_OUTPUT_FILENAME,
                 "contentBase64": base64.b64encode(component_bytes).decode("ascii"),
             } if component_bytes is not None else None,
+        },
+    }
+
+
+@app.post("/api/profile/calculate")
+async def calculate_profile(file: UploadFile = File(...)) -> dict[str, Any]:
+    file_bytes = await file.read()
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Please upload a valid .xlsx file.")
+
+    try:
+        images, zip_bytes = build_profile_outputs(file.filename, file_bytes)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {
+        "sheetNames": [item["sheetName"] for item in images],
+        "images": images,
+        "download": {
+            "filename": PROFILE_OUTPUT_FILENAME,
+            "contentBase64": base64.b64encode(zip_bytes).decode("ascii"),
         },
     }
