@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
+import { API_BASE_URL, describeApiError } from "@/app/lib/api-base";
 
 type MetricCard = {
   label: string;
@@ -24,18 +25,6 @@ type DownloadPayload = {
 
 type CalculationResponse = {
   metrics: MetricCard[];
-  dashboardRows: Array<{
-    name: string;
-    sourceName: string;
-    kind: "component" | "worksheet";
-    treeBiomass: number;
-    treeVolumePerRai: number;
-    saplingVolumePerRai: number;
-    shannonIndex: number;
-    treeCount: number;
-    saplingCount: number;
-    unmatchedSpecies: number;
-  }>;
   previews: PreviewMap;
   downloads: {
     summary: DownloadPayload;
@@ -49,8 +38,6 @@ type SheetGroup = {
   name: string;
   sheetNames: string[];
 };
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 function base64ToBlob(base64: string): Blob {
   const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
@@ -165,7 +152,33 @@ export default function Page() {
     if (!result) {
       return [];
     }
-    return result.dashboardRows ?? [];
+    const componentNames = new Set(groups.map((group) => group.name.trim()).filter(Boolean));
+    const summaryRows = result.previews.summaryAll ?? [];
+
+    return summaryRows
+      .map((row) => {
+        const name = String(row.sheet_name ?? "Unknown");
+        return {
+          name,
+          isComponent: componentNames.has(name),
+          nTree: toNumber(row.n_tree),
+          nSapling: toNumber(row.n_sapling),
+          biomass: toNumber(row.total_tree_biomass),
+          treeVolume: toNumber(row.total_tree_volume_m3),
+          saplingVolume: toNumber(row.total_sapling_volume_m3),
+          seedling: toNumber(row.total_seedling_number),
+          bamboo: toNumber(row.total_bamboo_culm),
+          shannon: toNumber(row.shannon_index),
+          unmatchedTree: toNumber(row.n_unmatched_tree_species),
+          unmatchedSapling: toNumber(row.n_unmatched_sapling_species),
+        };
+      })
+      .sort((left, right) => {
+        if (left.isComponent !== right.isComponent) {
+          return left.isComponent ? -1 : 1;
+        }
+        return left.name.localeCompare(right.name);
+      });
   }, [groups, result]);
 
   async function handleInspect(file: File) {
@@ -193,7 +206,7 @@ export default function Page() {
     } catch (inspectError) {
       setSheetNames([]);
       setGroups([]);
-      setError(inspectError instanceof Error ? inspectError.message : "Could not inspect workbook.");
+      setError(describeApiError(inspectError));
     } finally {
       setInspectBusy(false);
     }
@@ -305,7 +318,7 @@ export default function Page() {
       setMessage("Calculation completed.");
     } catch (calcError) {
       setResult(null);
-      setError(calcError instanceof Error ? calcError.message : "Calculation failed.");
+      setError(describeApiError(calcError));
     } finally {
       setBusy(false);
     }
@@ -821,53 +834,53 @@ export default function Page() {
                         key={row.name}
                         className="rounded-[30px] border border-emerald-950/8 bg-[linear-gradient(180deg,#fbfefb,#f3f9f4)] p-5 shadow-sm"
                       >
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div>
-                            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-                              {row.kind === "component" ? "Component" : "Worksheet"}
-                            </p>
-                            <h4 className="mt-2 font-display text-3xl text-emerald-950">{row.name}</h4>
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+                                {row.isComponent ? "Component" : "Worksheet"}
+                              </p>
+                              <h4 className="mt-2 font-display text-3xl text-emerald-950">{row.name}</h4>
+                            </div>
+                            <div className="rounded-full bg-emerald-950 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-white">
+                              {row.isComponent ? "Grouped" : "Single"}
+                            </div>
                           </div>
-                          <div className="rounded-full bg-emerald-950 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-white">
-                            {row.kind === "component" ? "Grouped" : "Single"}
-                          </div>
-                        </div>
 
-                        <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                          <div className="rounded-[22px] bg-white p-4 ring-1 ring-emerald-950/8">
-                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Tree biomass</p>
-                            <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.treeBiomass, 2)}</p>
+                          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                            <div className="rounded-[22px] bg-white p-4 ring-1 ring-emerald-950/8">
+                              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Tree biomass</p>
+                              <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.biomass, 2)}</p>
+                            </div>
+                            <div className="rounded-[22px] bg-white p-4 ring-1 ring-emerald-950/8">
+                              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Tree volume (m3)</p>
+                              <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.treeVolume, 3)}</p>
+                            </div>
+                            <div className="rounded-[22px] bg-white p-4 ring-1 ring-emerald-950/8">
+                              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Sapling volume (m3)</p>
+                              <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.saplingVolume, 3)}</p>
+                            </div>
+                            <div className="rounded-[22px] bg-white p-4 ring-1 ring-emerald-950/8">
+                              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Shannon index</p>
+                              <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.shannon, 6)}</p>
+                            </div>
                           </div>
-                          <div className="rounded-[22px] bg-white p-4 ring-1 ring-emerald-950/8">
-                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Tree volume (m3/rai)</p>
-                            <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.treeVolumePerRai, 6)}</p>
-                          </div>
-                          <div className="rounded-[22px] bg-white p-4 ring-1 ring-emerald-950/8">
-                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Sapling volume (m3/rai)</p>
-                            <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.saplingVolumePerRai, 6)}</p>
-                          </div>
-                          <div className="rounded-[22px] bg-white p-4 ring-1 ring-emerald-950/8">
-                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Shannon index</p>
-                            <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.shannonIndex, 6)}</p>
-                          </div>
-                        </div>
 
-                        <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                          <div className="rounded-[20px] bg-emerald-50 px-4 py-3">
-                            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Trees</p>
-                            <p className="mt-2 text-lg font-semibold text-emerald-950">{formatMetricValue(row.treeCount, 0)}</p>
+                          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                            <div className="rounded-[20px] bg-emerald-50 px-4 py-3">
+                              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Trees</p>
+                              <p className="mt-2 text-lg font-semibold text-emerald-950">{formatMetricValue(row.nTree, 0)}</p>
+                            </div>
+                            <div className="rounded-[20px] bg-emerald-50 px-4 py-3">
+                              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Saplings</p>
+                              <p className="mt-2 text-lg font-semibold text-emerald-950">{formatMetricValue(row.nSapling, 0)}</p>
+                            </div>
+                            <div className="rounded-[20px] bg-emerald-50 px-4 py-3">
+                              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Unmatched species</p>
+                              <p className="mt-2 text-lg font-semibold text-emerald-950">
+                                {formatMetricValue(row.unmatchedTree + row.unmatchedSapling, 0)}
+                              </p>
+                            </div>
                           </div>
-                          <div className="rounded-[20px] bg-emerald-50 px-4 py-3">
-                            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Saplings</p>
-                            <p className="mt-2 text-lg font-semibold text-emerald-950">{formatMetricValue(row.saplingCount, 0)}</p>
-                          </div>
-                          <div className="rounded-[20px] bg-emerald-50 px-4 py-3">
-                            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Unmatched species</p>
-                            <p className="mt-2 text-lg font-semibold text-emerald-950">
-                              {formatMetricValue(row.unmatchedSpecies, 0)}
-                            </p>
-                          </div>
-                        </div>
                       </article>
                     ))
                   ) : (

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { ChangeEvent, DragEvent, useRef, useState } from "react";
+import { API_BASE_URL, describeApiError } from "@/app/lib/api-base";
 
 type DownloadPayload = {
   filename: string;
@@ -19,8 +20,6 @@ type ProfileResponse = {
   images: ProfileImage[];
   download: DownloadPayload;
 };
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 function base64ToBlob(base64: string, mimeType: string) {
   const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
@@ -95,7 +94,7 @@ export default function ProfilePage() {
       setMessage(`Detected ${data.sheetNames.length} sheet(s) ready for profile rendering.`);
     } catch (inspectError) {
       setSheetNames([]);
-      setError(inspectError instanceof Error ? inspectError.message : "Could not inspect workbook.");
+      setError(describeApiError(inspectError));
     } finally {
       setInspectBusy(false);
     }
@@ -160,7 +159,7 @@ export default function ProfilePage() {
       setMessage(`Generated ${data.images.length} profile diagram(s).`);
     } catch (calcError) {
       setResult(null);
-      setError(calcError instanceof Error ? calcError.message : "Profile calculation failed.");
+      setError(describeApiError(calcError));
     } finally {
       setBusy(false);
     }
