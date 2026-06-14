@@ -24,6 +24,18 @@ type DownloadPayload = {
 
 type CalculationResponse = {
   metrics: MetricCard[];
+  dashboardRows: Array<{
+    name: string;
+    sourceName: string;
+    kind: "component" | "worksheet";
+    treeBiomass: number;
+    treeVolumePerRai: number;
+    saplingVolumePerRai: number;
+    shannonIndex: number;
+    treeCount: number;
+    saplingCount: number;
+    unmatchedSpecies: number;
+  }>;
   previews: PreviewMap;
   downloads: {
     summary: DownloadPayload;
@@ -153,34 +165,7 @@ export default function Page() {
     if (!result) {
       return [];
     }
-
-    const componentNames = new Set(groups.map((group) => group.name.trim()).filter(Boolean));
-    const summaryRows = result.previews.summaryAll ?? [];
-
-    return summaryRows
-      .map((row) => {
-        const name = String(row.sheet_name ?? "Unknown");
-        return {
-          name,
-          isComponent: componentNames.has(name),
-          nTree: toNumber(row.n_tree),
-          nSapling: toNumber(row.n_sapling),
-          biomass: toNumber(row.total_tree_biomass),
-          treeVolume: toNumber(row.total_tree_volume_m3),
-          saplingVolume: toNumber(row.total_sapling_volume_m3),
-          seedling: toNumber(row.total_seedling_number),
-          bamboo: toNumber(row.total_bamboo_culm),
-          shannon: toNumber(row.shannon_index),
-          unmatchedTree: toNumber(row.n_unmatched_tree_species),
-          unmatchedSapling: toNumber(row.n_unmatched_sapling_species),
-        };
-      })
-      .sort((left, right) => {
-        if (left.isComponent !== right.isComponent) {
-          return left.isComponent ? -1 : 1;
-        }
-        return left.name.localeCompare(right.name);
-      });
+    return result.dashboardRows ?? [];
   }, [groups, result]);
 
   async function handleInspect(file: File) {
@@ -357,12 +342,27 @@ export default function Page() {
                     >
                       Workbook template
                     </a>
+                    <a
+                      className="block rounded-2xl px-4 py-3 transition hover:bg-white/10"
+                      href={`${API_BASE_URL}/api/profile/template`}
+                    >
+                      Profile template
+                    </a>
+                    <Link className="block rounded-2xl px-4 py-3 transition hover:bg-white/10" href="/profile">
+                      Profile workspace
+                    </Link>
                     <Link className="block rounded-2xl px-4 py-3 transition hover:bg-white/10" href="/detail">
                       Calculation detail
                     </Link>
                   </div>
                 </details>
 
+                <Link
+                  className="rounded-full border border-white/12 bg-white/10 px-4 py-3 text-white transition hover:bg-white/16"
+                  href="/profile"
+                >
+                  Profile
+                </Link>
                 <Link
                   className="rounded-full border border-white/12 bg-white/10 px-4 py-3 text-white transition hover:bg-white/16"
                   href="/detail"
@@ -450,6 +450,16 @@ export default function Page() {
                 <div className="rounded-[28px] border border-white/10 bg-white/8 p-5 text-white backdrop-blur">
                   <p className="text-xs font-semibold uppercase tracking-[0.26em] text-emerald-100/65">Output</p>
                   <p className="mt-3 text-sm leading-7 text-emerald-50/78">Review the preview tables first, then download the workbooks you want to keep.</p>
+                </div>
+                <div className="rounded-[28px] border border-white/10 bg-white/8 p-5 text-white backdrop-blur sm:col-span-2">
+                  <p className="text-xs font-semibold uppercase tracking-[0.26em] text-emerald-100/65">Separate tool</p>
+                  <p className="mt-3 text-sm leading-7 text-emerald-50/78">
+                    Need crown-position profile diagrams instead of biomass outputs? Use the dedicated{" "}
+                    <Link className="font-semibold text-white underline decoration-emerald-300/60 underline-offset-4" href="/profile">
+                      Profile workspace
+                    </Link>{" "}
+                    so users can fill a profile template and generate one diagram per sheet without touching the biomass flow.
+                  </p>
                 </div>
               </div>
             </div>
@@ -814,47 +824,47 @@ export default function Page() {
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                           <div>
                             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-                              {row.isComponent ? "Component" : "Worksheet"}
+                              {row.kind === "component" ? "Component" : "Worksheet"}
                             </p>
                             <h4 className="mt-2 font-display text-3xl text-emerald-950">{row.name}</h4>
                           </div>
                           <div className="rounded-full bg-emerald-950 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-white">
-                            {row.isComponent ? "Grouped" : "Single"}
+                            {row.kind === "component" ? "Grouped" : "Single"}
                           </div>
                         </div>
 
                         <div className="mt-5 grid gap-3 sm:grid-cols-2">
                           <div className="rounded-[22px] bg-white p-4 ring-1 ring-emerald-950/8">
                             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Tree biomass</p>
-                            <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.biomass, 2)}</p>
+                            <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.treeBiomass, 2)}</p>
                           </div>
                           <div className="rounded-[22px] bg-white p-4 ring-1 ring-emerald-950/8">
-                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Tree volume (m3)</p>
-                            <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.treeVolume, 3)}</p>
+                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Tree volume (m3/rai)</p>
+                            <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.treeVolumePerRai, 6)}</p>
                           </div>
                           <div className="rounded-[22px] bg-white p-4 ring-1 ring-emerald-950/8">
-                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Sapling volume (m3)</p>
-                            <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.saplingVolume, 3)}</p>
+                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Sapling volume (m3/rai)</p>
+                            <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.saplingVolumePerRai, 6)}</p>
                           </div>
                           <div className="rounded-[22px] bg-white p-4 ring-1 ring-emerald-950/8">
                             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Shannon index</p>
-                            <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.shannon, 6)}</p>
+                            <p className="mt-2 font-display text-2xl text-emerald-950">{formatMetricValue(row.shannonIndex, 6)}</p>
                           </div>
                         </div>
 
                         <div className="mt-4 grid gap-3 sm:grid-cols-3">
                           <div className="rounded-[20px] bg-emerald-50 px-4 py-3">
                             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Trees</p>
-                            <p className="mt-2 text-lg font-semibold text-emerald-950">{formatMetricValue(row.nTree, 0)}</p>
+                            <p className="mt-2 text-lg font-semibold text-emerald-950">{formatMetricValue(row.treeCount, 0)}</p>
                           </div>
                           <div className="rounded-[20px] bg-emerald-50 px-4 py-3">
                             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Saplings</p>
-                            <p className="mt-2 text-lg font-semibold text-emerald-950">{formatMetricValue(row.nSapling, 0)}</p>
+                            <p className="mt-2 text-lg font-semibold text-emerald-950">{formatMetricValue(row.saplingCount, 0)}</p>
                           </div>
                           <div className="rounded-[20px] bg-emerald-50 px-4 py-3">
                             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Unmatched species</p>
                             <p className="mt-2 text-lg font-semibold text-emerald-950">
-                              {formatMetricValue(row.unmatchedTree + row.unmatchedSapling, 0)}
+                              {formatMetricValue(row.unmatchedSpecies, 0)}
                             </p>
                           </div>
                         </div>

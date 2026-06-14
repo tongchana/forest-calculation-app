@@ -13,8 +13,8 @@ const bodyFont = Plus_Jakarta_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Forest Calculation Suite",
-  description: "A modern public-facing forest calculation frontend powered by Next.js and a reused Python workflow.",
+  title: "Forest Survey Workspaces",
+  description: "Separate web workspaces for forest biomass calculations and profile diagram rendering.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
