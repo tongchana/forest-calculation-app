@@ -110,8 +110,6 @@ function fileSize(file: File | null) {
   return `${(file.size / 1024 / 1024).toFixed(2)} MB`;
 }
 
-const INITIAL_API_BASE_URL = "https://forest-calculation-api.onrender.com";
-
 export default function Page() {
   const [plotAreaHa, setPlotAreaHa] = useState(0.1);
   const [raiPerHectare, setRaiPerHectare] = useState(6.25);
@@ -124,7 +122,6 @@ export default function Page() {
   const [dragActive, setDragActive] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [resourceApiBaseUrl, setResourceApiBaseUrl] = useState(INITIAL_API_BASE_URL);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -143,17 +140,16 @@ export default function Page() {
       }
     }
     void loadConfig();
-    setResourceApiBaseUrl(API_BASE_URL);
   }, []);
 
   const resources: ResourceLink[] = useMemo(
     () => [
-      { label: "Workbook Template", href: `${resourceApiBaseUrl}/api/template`, external: true },
-      { label: "Profile Template", href: `${resourceApiBaseUrl}/api/profile/template`, external: true },
+      { label: "Workbook Template", href: `${API_BASE_URL}/api/template`, external: true },
+      { label: "Profile Template", href: `${API_BASE_URL}/api/profile/template`, external: true },
       { label: "Profile Workspace", href: "/profile" },
       { label: "Calculation Detail", href: "/detail" },
     ],
-    [resourceApiBaseUrl],
+    [],
   );
 
   const groupedSheets = useMemo(() => new Set(groups.flatMap((group) => group.sheetNames)), [groups]);

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, useMemo, useRef, useState } from "react";
 import { API_BASE_URL, describeApiError } from "@/app/lib/api-base";
 import {
   AppHeader,
@@ -57,7 +57,6 @@ function fileSize(file: File | null) {
   return `${(file.size / 1024 / 1024).toFixed(2)} MB`;
 }
 
-const INITIAL_API_BASE_URL = "https://forest-calculation-api.onrender.com";
 const requiredColumns = ["Species", "Height", "Position", "Crown cover"];
 
 export default function ProfilePage() {
@@ -69,21 +68,16 @@ export default function ProfilePage() {
   const [dragActive, setDragActive] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [resourceApiBaseUrl, setResourceApiBaseUrl] = useState(INITIAL_API_BASE_URL);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    setResourceApiBaseUrl(API_BASE_URL);
-  }, []);
 
   const resources: ResourceLink[] = useMemo(
     () => [
-      { label: "Profile Template", href: `${resourceApiBaseUrl}/api/profile/template`, external: true },
-      { label: "Workbook Template", href: `${resourceApiBaseUrl}/api/template`, external: true },
+      { label: "Profile Template", href: `${API_BASE_URL}/api/profile/template`, external: true },
+      { label: "Workbook Template", href: `${API_BASE_URL}/api/template`, external: true },
       { label: "Forest Calculation Workspace", href: "/" },
       { label: "Calculation Detail", href: "/detail" },
     ],
-    [resourceApiBaseUrl],
+    [],
   );
 
   const canRender = Boolean(workbookFile) && sheetNames.length > 0 && !busy && !inspectBusy;
