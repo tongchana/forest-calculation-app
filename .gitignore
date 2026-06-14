@@ -5,6 +5,8 @@ __pycache__/
 .Python
 .streamlit/secrets.toml
 streamlit_*.log
+.env.tokens
+.env.tokens.txt
 
 forest_calculation_output.xlsx
 forest_calculation_output_summary_by_site.xlsx
