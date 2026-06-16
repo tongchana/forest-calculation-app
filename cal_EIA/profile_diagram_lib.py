@@ -49,6 +49,11 @@ PLOT_PALETTE = [
 
 PROFILE_CROWN_WIDTH_SCALE = 1.18
 PROFILE_CROWN_HEIGHT_SCALE = 0.7
+TRUNK_CROWN_OVERLAP_RATIO = 0.20
+FIRST_BRANCH_LENGTH_RATIO = 0.18
+FIRST_BRANCH_MIN_LENGTH = 0.45
+FIRST_BRANCH_MAX_LENGTH = 1.15
+FIRST_BRANCH_BUSH_SCALE = 1.56
 SIDE_PADDING_METERS = 4.6
 THAI_FONT_FILES = [
     Path(__file__).with_name("Sarabun-Regular.ttf"),
@@ -127,6 +132,15 @@ def compute_profile_limits(df: pd.DataFrame) -> tuple[float, float]:
     left = (df["x"] - df["crown_x_minus"] * PROFILE_CROWN_WIDTH_SCALE).min()
     right = (df["x"] + df["crown_x_plus"] * PROFILE_CROWN_WIDTH_SCALE).max()
     return float(left), float(right)
+
+
+def pick_first_branch_direction(row: pd.Series | pd.Index | object) -> float:
+    seed_value = f"{getattr(row, 'species', '')}|{getattr(row, 'no', '')}|{getattr(row, 'x', '')}|{getattr(row, 'y', '')}"
+    return -1.0 if sum(ord(char) for char in seed_value) % 2 == 0 else 1.0
+
+
+def compute_first_branch_length(crown_width: float) -> float:
+    return float(np.clip(crown_width * FIRST_BRANCH_LENGTH_RATIO, FIRST_BRANCH_MIN_LENGTH, FIRST_BRANCH_MAX_LENGTH))
 
 
 def add_bushy_crown(
@@ -235,7 +249,7 @@ def draw_profile_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) ->
     draw_df["crown_area"] = draw_df["crown_width"] * draw_df["crown_depth"]
 
     for row in draw_df.itertuples(index=False):
-        trunk_top_y = min(max(row.height_m - row.crown_depth, 0), 19.6)
+        trunk_top_y = min(max(row.height_m - row.crown_depth, 0) + row.crown_depth * TRUNK_CROWN_OVERLAP_RATIO, 19.6)
         ax.plot(
             [row.x, row.x],
             [0, trunk_top_y],
@@ -245,6 +259,36 @@ def draw_profile_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) ->
             zorder=2,
             solid_capstyle="round",
         )
+
+        if pd.notna(row.first_branch_m):
+            branch_origin_y = float(np.clip(row.first_branch_m, 0.45, max(row.height_m - 0.4, 0.45)))
+            branch_direction = pick_first_branch_direction(row)
+            branch_length = compute_first_branch_length(float(row.crown_width))
+            branch_dx = branch_length * np.cos(np.deg2rad(45)) * branch_direction
+            branch_dy = branch_length * np.sin(np.deg2rad(45))
+            branch_end_x = float(row.x + branch_dx)
+            branch_end_y = float(min(branch_origin_y + branch_dy, 19.65))
+            ax.plot(
+                [row.x, branch_end_x],
+                [branch_origin_y, branch_end_y],
+                color="#4e342e",
+                linewidth=max(float(row.trunk_width) * 0.45, 1.0),
+                alpha=0.95,
+                zorder=2.4,
+                solid_capstyle="round",
+            )
+            add_bushy_crown(
+                ax=ax,
+                center_x=branch_end_x,
+                center_y=branch_end_y,
+                width=max(branch_length * FIRST_BRANCH_BUSH_SCALE, 0.2),
+                height=max(branch_length * FIRST_BRANCH_BUSH_SCALE, 0.2),
+                color=colors[row.species],
+                edgecolor=colors[row.species],
+                linewidth=0.35,
+                alpha=0.8,
+                zorder=3.2,
+            )
 
     crown_df = draw_df.sort_values(["crown_area", "height_m"], ascending=[False, False])
     for row in crown_df.itertuples(index=False):
