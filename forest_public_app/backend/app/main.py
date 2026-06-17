@@ -90,6 +90,12 @@ def count_unmatched_species(unmatched: pd.DataFrame) -> int:
     return int(len(unmatched.index))
 
 
+def get_numeric_series(frame: pd.DataFrame, column_name: str) -> pd.Series:
+    if frame.empty or column_name not in frame.columns:
+        return pd.Series(dtype=float)
+    return pd.to_numeric(frame[column_name], errors="coerce").fillna(0)
+
+
 def build_metrics(
     summary_all: pd.DataFrame,
     unmatched: pd.DataFrame,
@@ -100,15 +106,17 @@ def build_metrics(
 
     filtered_summary = filter_primary_rows(summary_all, result_sheets)
     filtered_unmatched = filter_primary_rows(unmatched, result_sheets)
+    if filtered_summary.empty:
+        return []
 
-    total_tree = pd.to_numeric(filtered_summary.get("n_tree"), errors="coerce").fillna(0).sum()
-    total_sapling = pd.to_numeric(filtered_summary.get("n_sapling"), errors="coerce").fillna(0).sum()
-    total_tree_biomass = pd.to_numeric(filtered_summary.get("total_tree_biomass"), errors="coerce").fillna(0).sum()
-    total_tree_volume = pd.to_numeric(filtered_summary.get("total_tree_volume_m3"), errors="coerce").fillna(0).sum()
-    total_sapling_volume = pd.to_numeric(filtered_summary.get("total_sapling_volume_m3"), errors="coerce").fillna(0).sum()
+    total_tree = get_numeric_series(filtered_summary, "n_tree").sum()
+    total_sapling = get_numeric_series(filtered_summary, "n_sapling").sum()
+    total_tree_biomass = get_numeric_series(filtered_summary, "total_tree_biomass").sum()
+    total_tree_volume = get_numeric_series(filtered_summary, "total_tree_volume_m3").sum()
+    total_sapling_volume = get_numeric_series(filtered_summary, "total_sapling_volume_m3").sum()
 
-    shannon_series = pd.to_numeric(filtered_summary.get("shannon_index"), errors="coerce")
-    shannon_value = shannon_series.mean() if shannon_series is not None and not shannon_series.dropna().empty else None
+    shannon_series = get_numeric_series(filtered_summary, "shannon_index")
+    shannon_value = shannon_series.mean() if not shannon_series.empty else None
     unmatched_count = count_unmatched_species(filtered_unmatched)
 
     return [
