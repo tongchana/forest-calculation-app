@@ -7,7 +7,7 @@ This project is deployed as two separate services:
 
 ## 1. Deploy the backend on Render
 
-The repository already includes a root-level `render.yaml`.
+The deployment config now lives at `web_apps/render.yaml`.
 
 ### Click path
 
@@ -69,7 +69,7 @@ The frontend app now prefers a same-origin `/api/...` rewrite on Vercel, which h
 
 ## 2. Deploy the frontend on Vercel
 
-The frontend already includes `forest_public_app/frontend/vercel.json`.
+The frontend already includes `web_apps/forest_public_app/frontend/vercel.json`.
 
 ### Click path
 
@@ -80,7 +80,7 @@ The frontend already includes `forest_public_app/frontend/vercel.json`.
 5. In project settings, set `Root Directory` to:
 
 ```text
-forest_public_app/frontend
+web_apps/forest_public_app/frontend
 ```
 
 6. Add this environment variable:
@@ -129,7 +129,7 @@ Still keep the production Vercel domain in `CORS_ORIGINS` so direct backend acce
 
 ## 4. Files used for deployment
 
-- [render.yaml](C:/tong/work/cal_Biomass/render.yaml)
-- [forest_public_app/frontend/vercel.json](C:/tong/work/cal_Biomass/forest_public_app/frontend/vercel.json)
-- [forest_public_app/backend/app/main.py](C:/tong/work/cal_Biomass/forest_public_app/backend/app/main.py)
-- [forest_public_app/README.md](C:/tong/work/cal_Biomass/forest_public_app/README.md)
+- [render.yaml](C:/tong/work/cal_Biomass/web_apps/render.yaml)
+- [forest_public_app/frontend/vercel.json](C:/tong/work/cal_Biomass/web_apps/forest_public_app/frontend/vercel.json)
+- [forest_public_app/backend/app/main.py](C:/tong/work/cal_Biomass/web_apps/forest_public_app/backend/app/main.py)
+- [forest_public_app/README.md](C:/tong/work/cal_Biomass/web_apps/forest_public_app/README.md)

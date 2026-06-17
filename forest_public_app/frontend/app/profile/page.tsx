@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, DragEvent, useMemo, useRef, useState } from "react";
+import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL, describeApiError } from "@/app/lib/api-base";
 import {
   AppHeader,
@@ -35,6 +35,16 @@ type ProfileResponse = {
   download: DownloadPayload;
 };
 
+const requiredColumns = ["Species", "Height", "Position", "Crown cover"];
+const profileSectionIds = [
+  "download-template",
+  "upload-profile-workbook",
+  "validate-profile-sheets",
+  "generate-profile-diagrams",
+  "profile-gallery",
+  "download-profile-outputs",
+] as const;
+
 function base64ToBlob(base64: string, mimeType: string) {
   const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
   return new Blob([bytes], { type: mimeType });
@@ -57,8 +67,6 @@ function fileSize(file: File | null) {
   return `${(file.size / 1024 / 1024).toFixed(2)} MB`;
 }
 
-const requiredColumns = ["Species", "Height", "Position", "Crown cover"];
-
 export default function ProfilePage() {
   const [workbookFile, setWorkbookFile] = useState<File | null>(null);
   const [sheetNames, setSheetNames] = useState<string[]>([]);
@@ -68,13 +76,48 @@ export default function ProfilePage() {
   const [dragActive, setDragActive] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeStepId, setActiveStepId] = useState<(typeof profileSectionIds)[number]>("download-template");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    const sections = profileSectionIds
+      .map((id) => document.getElementById(id))
+      .filter((section): section is HTMLElement => Boolean(section));
+
+    if (sections.length === 0) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visibleEntry = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+
+        if (visibleEntry?.target?.id) {
+          setActiveStepId(visibleEntry.target.id as (typeof profileSectionIds)[number]);
+        }
+      },
+      {
+        rootMargin: "-20% 0px -60% 0px",
+        threshold: [0.2, 0.5, 0.8],
+      },
+    );
+
+    sections.forEach((section) => observer.observe(section));
+    return () => observer.disconnect();
+  }, []);
+
+  const templateLinks: ResourceLink[] = useMemo(
+    () => [
+      { label: "Biomass Template", href: `${API_BASE_URL}/api/template`, external: true },
+      { label: "Profile Template", href: `${API_BASE_URL}/api/profile/template`, external: true },
+    ],
+    [],
+  );
 
   const resources: ResourceLink[] = useMemo(
     () => [
-      { label: "Profile Template", href: `${API_BASE_URL}/api/profile/template`, external: true },
-      { label: "Workbook Template", href: `${API_BASE_URL}/api/template`, external: true },
-      { label: "Forest Calculation Workspace", href: "/" },
       { label: "Calculation Detail", href: "/detail" },
     ],
     [],
@@ -83,37 +126,43 @@ export default function ProfilePage() {
   const canRender = Boolean(workbookFile) && sheetNames.length > 0 && !busy && !inspectBusy;
 
   const workflowSteps: WorkflowStep[] = [
-    { title: "Download template", body: "Use the profile workbook template.", state: "complete" },
+    { id: "download-template", title: "Download template", body: "Use the official profile format.", state: "complete" },
     {
-      title: "Fill required columns",
-      body: "Species, Height, Position, and Crown cover.",
+      id: "upload-profile-workbook",
+      title: "Upload profile workbook",
+      body: workbookFile ? "Completed profile workbook uploaded." : "Add completed profile Excel file.",
       state: workbookFile ? "complete" : "active",
     },
     {
-      title: "Upload workbook",
-      body: workbookFile ? workbookFile.name : "Add a completed .xlsx workbook.",
-      state: workbookFile ? "complete" : "active",
+      id: "validate-profile-sheets",
+      title: "Validate profile sheets",
+      body: "Check Species, Height, Position, and Crown cover.",
+      state: sheetNames.length > 0 ? "complete" : workbookFile ? "active" : "disabled",
     },
     {
+      id: "generate-profile-diagrams",
       title: "Generate diagrams",
-      body: result ? `${result.images.length} diagram(s) generated.` : "Render one profile diagram per sheet.",
+      body: "Render canopy profile diagrams.",
       state: result ? "complete" : canRender ? "active" : "disabled",
     },
     {
+      id: "profile-gallery",
+      title: "Review gallery",
+      body: "Preview diagrams by worksheet.",
+      state: result ? "complete" : "disabled",
+    },
+    {
+      id: "download-profile-outputs",
       title: "Download outputs",
-      body: result ? "ZIP and PNG downloads are available." : "Downloads unlock after rendering.",
+      body: "Export images or ZIP package.",
       state: result ? "complete" : "disabled",
     },
   ];
 
   const statusItems: StatusItem[] = [
-    { label: "Current workbook", value: workbookFile?.name ?? "Not uploaded", tone: workbookFile ? "success" : "warning" },
-    { label: "File size", value: fileSize(workbookFile) },
-    { label: "Detected worksheets", value: sheetNames.length },
-    { label: "Valid profile sheets", value: sheetNames.length, tone: sheetNames.length > 0 ? "success" : "warning" },
-    { label: "Invalid profile sheets", value: error ? "Check error" : 0, tone: error ? "danger" : "success" },
-    { label: "Rendering", value: busy ? "Running" : result ? "Complete" : "Not started", tone: result ? "success" : "default" },
-    { label: "Output availability", value: result ? "Available" : "Locked", tone: result ? "success" : "warning" },
+    { label: "Worksheets", value: sheetNames.length, tone: sheetNames.length > 0 ? "success" : "warning" },
+    { label: "Valid sheets", value: sheetNames.length, tone: sheetNames.length > 0 ? "success" : "warning" },
+    { label: "Outputs", value: result ? "Ready" : "Locked", tone: result ? "success" : "warning" },
   ];
 
   async function inspectWorkbook(file: File) {
@@ -223,29 +272,30 @@ export default function ProfilePage() {
     <main className="min-h-screen bg-[#F6F8F4] text-[#1F2933]">
       <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">
         <AppHeader
-          eyebrow="Profile Diagram Studio"
+          eyebrow="Forest Calculation Suite"
           title="Profile Diagram Studio"
-          subtitle="Workbook to canopy profile diagram"
-          primaryAction={{ label: "Back to Forest Calculation Workspace", href: "/" }}
+          subtitle="Dedicated workflow for canopy profile diagrams."
           links={resources}
+          primaryAction={{ label: "Back to Biomass Workspace", href: "/" }}
+          templateLinks={templateLinks}
         />
 
-        <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_330px]">
-          <SidebarWorkflow resources={resources} steps={workflowSteps} title="Profile Workflow" />
+        <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_300px]">
+          <SidebarWorkflow activeStepId={activeStepId} steps={workflowSteps} title="Profile Workflow" />
 
           <div className="space-y-6">
             <section className="overflow-hidden rounded-[36px] border border-[#DDE5D5] bg-white shadow-[0_22px_70px_rgba(31,94,59,0.07)]">
               <div className="grid gap-0 lg:grid-cols-[1.15fr_0.85fr]">
                 <div className="p-7 sm:p-9">
                   <p className="text-xs font-bold uppercase tracking-[0.28em] text-[#6A8F5D]">Canopy profile rendering</p>
-                  <h2 className="mt-3 max-w-3xl font-display text-5xl leading-[0.96] text-[#1F2933] sm:text-6xl">
-                    Generate clean profile diagrams from structured Excel worksheets.
+                  <h2 className="mt-3 max-w-3xl text-[2.3rem] font-semibold leading-[1.02] text-[#1F2933] sm:text-[2.8rem]">
+                    Profile Diagram Studio
                   </h2>
-                  <p className="mt-5 max-w-2xl text-base leading-8 text-[#667085]">
-                    This page is only for profile diagrams. It keeps diagram rendering separate from the forest metric workspace.
+                  <p className="mt-5 max-w-2xl text-[15px] leading-8 text-[#667085] sm:text-base">
+                    Upload profile Excel data, validate tree structure fields, generate canopy profile diagrams, and download image outputs.
                   </p>
                   <div className="mt-6 flex flex-wrap gap-2">
-                    {["Template", "Species", "Height", "Position", "Crown cover"].map((chip) => (
+                    {["Template", "Upload", "Validate", "Generate", "Download"].map((chip) => (
                       <span key={chip} className="rounded-full border border-[#DDE5D5] bg-[#F6F8F4] px-4 py-2 text-sm font-semibold text-[#1F5E3B]">
                         {chip}
                       </span>
@@ -253,20 +303,39 @@ export default function ProfilePage() {
                   </div>
                 </div>
                 <div className="bg-[#1F5E3B] p-7 text-white sm:p-9">
-                  <p className="text-xs font-bold uppercase tracking-[0.28em] text-white/70">Studio snapshot</p>
+                  <p className="text-xs font-bold uppercase tracking-[0.28em] text-white/70">Profile Snapshot</p>
                   <div className="mt-6 grid gap-4">
-                    <MetricTile label="Detected sheets" value={String(sheetNames.length)} help="Every detected worksheet can become one diagram." />
-                    <MetricTile label="Rendered diagrams" value={String(result?.images.length ?? 0)} help="PNG cards appear in the gallery." />
-                    <MetricTile label="ZIP output" value={result ? "Ready" : "Waiting"} help="Download all diagrams after rendering." />
+                    <MetricTile label="Worksheets" value={String(sheetNames.length)} help="Detected after workbook inspection." />
+                    <MetricTile label="Valid sheets" value={String(sheetNames.length)} help="Current UI treats detected sheets as render-ready." />
+                    <MetricTile label="Outputs" value={result ? "Ready" : "Waiting"} help="ZIP output unlocks after rendering." />
                   </div>
                 </div>
               </div>
             </section>
 
             <SectionCard
+              description="Download and use the official profile workbook format before preparing canopy profile data."
               eyebrow="Step 1"
+              id="download-template"
+              title="Download profile template"
+            >
+              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]">
+                <div className="rounded-[28px] border border-[#DDE5D5] bg-[#F6F8F4] p-5">
+                  <p className="text-sm leading-7 text-[#667085]">
+                    Use the Profile Template when preparing profile diagram worksheets. This page focuses only on profile rendering outputs.
+                  </p>
+                </div>
+                <DownloadButton onClick={() => window.open(`${API_BASE_URL}/api/profile/template`, "_blank", "noopener,noreferrer")}>
+                  Download Profile Template
+                </DownloadButton>
+              </div>
+            </SectionCard>
+
+            <SectionCard
+              description="Upload a completed profile workbook in .xlsx format. File details appear immediately after upload."
+              eyebrow="Step 2"
+              id="upload-profile-workbook"
               title="Upload profile workbook"
-              description="Use the official profile template only. Upload a completed .xlsx workbook with one or more profile worksheets."
             >
               <UploadCard
                 dragActive={dragActive}
@@ -280,15 +349,35 @@ export default function ProfilePage() {
                 onDrop={handleDrop}
                 onFileChange={handleFileChange}
               />
+              <div className="mt-5 grid gap-4 md:grid-cols-3">
+                <MetricTile label="File name" value={workbookFile?.name ?? "Waiting"} help="Shown after upload." />
+                <MetricTile label="File size" value={fileSize(workbookFile)} help="Calculated from the uploaded workbook." />
+                <MetricTile
+                  label="Upload status"
+                  value={inspectBusy ? "Inspecting" : workbookFile ? "Ready" : "Waiting"}
+                  help="Inspection starts immediately after upload."
+                />
+              </div>
               {(message || error) && <Notice tone={error ? "error" : "success"}>{error ?? message}</Notice>}
             </SectionCard>
 
             <SectionCard
-              eyebrow="Step 2"
-              title="Profile workbook validation"
-              description="The backend inspects worksheet names and rendering will validate workbook content again during generation."
+              description="Review worksheet count and required structure fields before starting the rendering step."
+              eyebrow="Step 3"
+              id="validate-profile-sheets"
+              title="Validate profile sheets"
             >
-              <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
+              <div className="grid gap-4 md:grid-cols-3">
+                <MetricTile label="Detected worksheets" value={String(sheetNames.length)} help="Count returned by the inspect API." />
+                <MetricTile label="Valid sheets" value={String(sheetNames.length)} help="Detected sheets are treated as valid at the UI layer." />
+                <MetricTile
+                  label="Invalid sheets"
+                  value={error ? "Check warning" : 0}
+                  help={error ? "Review the current workbook warning before rendering." : "No per-sheet invalid list is returned by the current API."}
+                />
+              </div>
+
+              <div className="mt-5 grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
                 <div className="rounded-[30px] border border-[#DDE5D5] bg-[#F6F8F4] p-5">
                   <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#667085]">Required columns</p>
                   <div className="mt-4 grid gap-2">
@@ -302,16 +391,18 @@ export default function ProfilePage() {
                 </div>
                 <WorksheetList emptyText="Upload a profile workbook to inspect worksheet names." sheetNames={sheetNames} />
               </div>
+
               {workbookFile && sheetNames.length === 0 && !inspectBusy && (
-                <Notice tone="warning">No worksheet names were detected. Confirm that this workbook follows the profile template before rendering.</Notice>
+                <Notice tone="warning">No valid worksheet names were detected. Confirm that the workbook follows the official profile template.</Notice>
               )}
             </SectionCard>
 
             <SectionCard
               dark
-              eyebrow="Step 3"
+              description="Rendering uses the existing profile API and stays focused on canopy profile diagrams only."
+              eyebrow="Step 4"
+              id="generate-profile-diagrams"
               title="Generate profile diagrams"
-              description="Rendering stays focused on canopy profile diagrams and uses the existing profile API."
             >
               <button
                 className="inline-flex w-full items-center justify-center rounded-full bg-white px-6 py-4 text-sm font-bold text-[#1F5E3B] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45"
@@ -321,19 +412,15 @@ export default function ProfilePage() {
               >
                 {busy ? "Rendering profile diagrams..." : "Generate profile diagrams"}
               </button>
+              {!canRender && <Notice tone="warning">Upload a valid profile workbook and wait for inspection before rendering diagrams.</Notice>}
+              {result && <Notice tone="success">Profile diagrams generated successfully. Review them below or download the ZIP package.</Notice>}
             </SectionCard>
 
             <SectionCard
-              action={
-                <div className="w-full sm:w-72">
-                  <DownloadButton disabled={!result} onClick={() => result && downloadFile(result.download, "application/zip")}>
-                    Download all as ZIP
-                  </DownloadButton>
-                </div>
-              }
-              eyebrow="Results"
-              title="Profile gallery"
-              description="Each worksheet renders into a preview card with its own PNG download."
+              description="Preview one rendered diagram per worksheet. Use the PNG button on each card if you want a single image."
+              eyebrow="Step 5"
+              id="profile-gallery"
+              title="Review profile gallery"
             >
               {result ? (
                 <div className="grid gap-6 xl:grid-cols-2">
@@ -342,7 +429,7 @@ export default function ProfilePage() {
                       <div className="flex flex-col gap-3 px-2 pb-4 sm:flex-row sm:items-center sm:justify-between">
                         <div>
                           <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#667085]">Worksheet</p>
-                          <h3 className="mt-1 font-display text-2xl text-[#1F2933]">{image.sheetName}</h3>
+                          <h3 className="mt-1 text-[1.3rem] font-semibold text-[#1F2933]">{image.sheetName}</h3>
                         </div>
                         <button
                           className="rounded-full border border-[#DDE5D5] bg-white px-4 py-2 text-sm font-semibold text-[#1F5E3B]"
@@ -361,13 +448,48 @@ export default function ProfilePage() {
                   ))}
                 </div>
               ) : (
-                <EmptyState title="No diagrams generated yet" body="Upload a valid profile workbook and render diagrams to preview one output per sheet." />
+                <EmptyState title="No diagrams generated yet" body="Generate profile diagrams to preview one image card per worksheet." />
+              )}
+            </SectionCard>
+
+            <SectionCard
+              action={
+                <div className="w-full sm:w-72">
+                  <DownloadButton disabled={!result} onClick={() => result && downloadFile(result.download, "application/zip")}>
+                    Download all profile diagrams as ZIP
+                  </DownloadButton>
+                </div>
+              }
+              description="Export all rendered diagrams as one ZIP package after generation completes."
+              eyebrow="Step 6"
+              id="download-profile-outputs"
+              title="Download profile outputs"
+            >
+              {result ? (
+                <div className="grid gap-4 md:grid-cols-3">
+                  <MetricTile label="Worksheet outputs" value={String(result.images.length)} help="One rendered image per worksheet." />
+                  <MetricTile label="ZIP package" value="Ready" help="Includes all generated profile diagrams." />
+                  <MetricTile label="Current workbook" value={workbookFile?.name ?? "Ready"} help="Source workbook used for this render." />
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <DownloadButton disabled onClick={() => undefined}>
+                    Download all profile diagrams as ZIP
+                  </DownloadButton>
+                  <EmptyState title="No profile outputs yet" body="Generate profile diagrams first to unlock the ZIP download." />
+                </div>
               )}
             </SectionCard>
           </div>
 
           <div className="xl:block">
-            <StatusPanel description="Live workbook, worksheet, rendering, and output status for profile diagrams only." error={error} items={statusItems} message={message} title="Profile readiness" />
+            <StatusPanel
+              description="Short snapshot of profile worksheet readiness and rendered output availability."
+              error={error}
+              items={statusItems}
+              message={message}
+              title="Profile Snapshot"
+            />
           </div>
         </div>
       </div>

@@ -26,12 +26,14 @@ Keep these files in the same project directory:
 ## Install dependencies
 
 ```bash
+cd web_apps
 pip install -r requirements.txt
 ```
 
 ## Run the web app
 
 ```bash
+cd web_apps
 streamlit run app.py
 ```
 
@@ -59,7 +61,7 @@ This project is already prepared for Streamlit deployment with:
 6. Set the main file path to:
 
 ```text
-app.py
+web_apps/app.py
 ```
 
 7. Click **Deploy**

@@ -3,7 +3,7 @@
 This folder contains a separate public-facing web stack for the forest calculation workflow.
 
 - `frontend/`: Next.js + Tailwind CSS interface
-- `backend/`: FastAPI service that reuses the existing Python calculation logic from the repository root
+- `backend/`: FastAPI service that reuses the existing Python calculation logic from the `web_apps` root
 
 The original Streamlit apps remain untouched.
 
@@ -28,16 +28,17 @@ The backend is responsible for:
 
 ### Backend
 
-From the repository root:
+From `web_apps`:
 
 ```bash
+cd web_apps
 python -m pip install -r forest_public_app/backend/requirements.txt
 python -m uvicorn forest_public_app.backend.app.main:app --reload --port 8000
 ```
 
 ### Frontend
 
-From `forest_public_app/frontend`:
+From `web_apps/forest_public_app/frontend`:
 
 ```bash
 pnpm install
@@ -62,10 +63,10 @@ pnpm build
 
 ### Frontend
 
-Deploy `forest_public_app/frontend` to Vercel.
+Deploy `web_apps/forest_public_app/frontend` to Vercel.
 
 - Framework preset: `Next.js`
-- Root directory: `forest_public_app/frontend`
+- Root directory: `web_apps/forest_public_app/frontend`
 - Environment variable:
 
 ```bash
@@ -85,7 +86,7 @@ uvicorn forest_public_app.backend.app.main:app --host 0.0.0.0 --port $PORT
 - Working directory:
 
 ```bash
-repository root
+web_apps
 ```
 
 If your deployment platform asks for install steps, use:
@@ -96,7 +97,7 @@ pip install -r forest_public_app/backend/requirements.txt
 
 For a click-by-click setup guide, see:
 
-- [forest_public_app/DEPLOY.md](C:/tong/work/cal_Biomass/forest_public_app/DEPLOY.md)
+- [forest_public_app/DEPLOY.md](C:/tong/work/cal_Biomass/web_apps/forest_public_app/DEPLOY.md)
 
 ## Current behavior
 
