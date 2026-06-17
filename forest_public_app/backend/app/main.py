@@ -269,6 +269,8 @@ def build_component_biomass_summary(
 ) -> list[dict[str, Any]]:
     summary_all = result_sheets.get("SUMMARY_ALL", pd.DataFrame())
     detail_tree = result_sheets.get("DETAIL_TREE_BIOMASS", pd.DataFrame())
+    if summary_all.empty or "sheet_name" not in summary_all.columns:
+        return []
     component_display_map = calc.get_component_display_name_map(result_sheets)
     component_names = calc.get_component_group_names_in_order(result_sheets)
     if sheet_groups:
