@@ -617,55 +617,59 @@ async def calculate(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    biomass_payload = None
-    if scope in {"biomass_only", "biomass_and_economic"}:
-        biomass_payload = build_biomass_payload(
-            result_sheets=result_sheets,
-            sheet_groups=parsed_sheet_groups,
-            plot_area_ha=plot_area_ha,
-            rai_per_hectare=rai_per_hectare,
-        )
+    try:
+        biomass_payload = None
+        if scope in {"biomass_only", "biomass_and_economic"}:
+            biomass_payload = build_biomass_payload(
+                result_sheets=result_sheets,
+                sheet_groups=parsed_sheet_groups,
+                plot_area_ha=plot_area_ha,
+                rai_per_hectare=rai_per_hectare,
+            )
 
-    economic_payload = None
-    economic_report_download = None
-    economic_json_download = None
-    if scope in {"economic_only", "biomass_and_economic"}:
-        bundle = calculate_forest_valuation_bundle_from_outputs(
-            outputs=result_sheets,
-            component_area_inputs=component_area_inputs,
-            ecosystem_user_inputs=ecosystem_inputs,
-            future_interest_rate=future_interest_rate,
-            future_periods_years=parsed_future_periods,
-        )
-        economic_payload = build_economic_preview(bundle)
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            temp_dir = Path(tmp_dir)
-            report_path = temp_dir / ECONOMIC_OUTPUT_FILENAME
-            write_forest_economic_report(report_path, result_sheets, bundle)
-            economic_report_download = serialize_download_payload(ECONOMIC_OUTPUT_FILENAME, report_path.read_bytes())
-        economic_json_download = serialize_download_payload(
-            ECONOMIC_JSON_FILENAME,
-            json.dumps(bundle, ensure_ascii=False, indent=2).encode("utf-8"),
-        )
+        economic_payload = None
+        economic_report_download = None
+        economic_json_download = None
+        if scope in {"economic_only", "biomass_and_economic"}:
+            bundle = calculate_forest_valuation_bundle_from_outputs(
+                outputs=result_sheets,
+                component_area_inputs=component_area_inputs,
+                ecosystem_user_inputs=ecosystem_inputs,
+                future_interest_rate=future_interest_rate,
+                future_periods_years=parsed_future_periods,
+            )
+            economic_payload = build_economic_preview(bundle)
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                temp_dir = Path(tmp_dir)
+                report_path = temp_dir / ECONOMIC_OUTPUT_FILENAME
+                write_forest_economic_report(report_path, result_sheets, bundle)
+                economic_report_download = serialize_download_payload(ECONOMIC_OUTPUT_FILENAME, report_path.read_bytes())
+            economic_json_download = serialize_download_payload(
+                ECONOMIC_JSON_FILENAME,
+                json.dumps(bundle, ensure_ascii=False, indent=2).encode("utf-8"),
+            )
 
-    return {
-        "calculationScope": scope,
-        "biomass": biomass_payload,
-        "economic": economic_payload,
-        "downloads": {
-            "biomassSummary": serialize_download_payload(SUMMARY_OUTPUT_FILENAME, summary_bytes)
-            if scope in {"biomass_only", "biomass_and_economic"}
-            else None,
-            "biomassDetail": serialize_download_payload(DETAIL_OUTPUT_FILENAME, detail_bytes)
-            if scope in {"biomass_only", "biomass_and_economic"}
-            else None,
-            "biomassComponent": serialize_download_payload(COMPONENT_OUTPUT_FILENAME, component_bytes)
-            if scope in {"biomass_only", "biomass_and_economic"} and component_bytes is not None
-            else None,
-            "economicReport": economic_report_download,
-            "economicJson": economic_json_download,
-        },
-    }
+        return {
+            "calculationScope": scope,
+            "biomass": biomass_payload,
+            "economic": economic_payload,
+            "downloads": {
+                "biomassSummary": serialize_download_payload(SUMMARY_OUTPUT_FILENAME, summary_bytes)
+                if scope in {"biomass_only", "biomass_and_economic"}
+                else None,
+                "biomassDetail": serialize_download_payload(DETAIL_OUTPUT_FILENAME, detail_bytes)
+                if scope in {"biomass_only", "biomass_and_economic"}
+                else None,
+                "biomassComponent": serialize_download_payload(COMPONENT_OUTPUT_FILENAME, component_bytes)
+                if scope in {"biomass_only", "biomass_and_economic"} and component_bytes is not None
+                else None,
+                "economicReport": economic_report_download,
+                "economicJson": economic_json_download,
+            },
+        }
+    except Exception as exc:  # noqa: BLE001
+        LOG.exception("Failed to assemble calculate response.")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/profile/calculate")
