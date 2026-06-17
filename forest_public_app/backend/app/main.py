@@ -13,8 +13,9 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 import pandas as pd
 from fastapi.encoders import jsonable_encoder
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse
 from openpyxl import load_workbook
 from pydantic import BaseModel
@@ -523,6 +524,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    LOG.exception("Unhandled exception for %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": str(exc) or exc.__class__.__name__,
+            "errorType": exc.__class__.__name__,
+            "path": request.url.path,
+        },
+    )
 
 
 @app.get("/api/health")
