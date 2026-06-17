@@ -2,6 +2,7 @@ import sys
 import unittest
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from pandas import Timestamp
 
@@ -10,7 +11,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from forest_public_app.backend.app.main import build_biomass_payload, build_metrics
+from forest_public_app.backend.app.main import build_biomass_payload, build_metrics, sanitize_for_json
 
 
 class ForestPublicAppBackendTests(unittest.TestCase):
@@ -60,6 +61,16 @@ class ForestPublicAppBackendTests(unittest.TestCase):
 
         self.assertEqual(payload["metrics"][0]["label"], "Total tree count")
         self.assertEqual(payload["previews"]["summaryAll"][0]["observed_at"], "2026-06-17T10:15:00")
+
+    def test_sanitize_for_json_converts_numpy_scalars_recursively(self):
+        value = {
+            "count": np.int64(5),
+            "nested": [np.float64(1.5), {"value": np.int32(2)}],
+        }
+
+        sanitized = sanitize_for_json(value)
+
+        self.assertEqual(sanitized, {"count": 5, "nested": [1.5, {"value": 2}]})
 
 
 if __name__ == "__main__":

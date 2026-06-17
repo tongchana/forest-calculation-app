@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
+import numpy as np
 import pandas as pd
 from fastapi.encoders import jsonable_encoder
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -72,6 +73,18 @@ def format_metric_value(value: object, decimals: int = 2) -> str:
     if isinstance(value, (int, float)):
         return f"{value:,.{decimals}f}" if isinstance(value, float) or decimals else f"{int(value):,}"
     return str(value)
+
+
+def sanitize_for_json(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): sanitize_for_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [sanitize_for_json(item) for item in value]
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if isinstance(value, np.generic):
+        return sanitize_for_json(value.item())
+    return value
 
 
 def filter_primary_rows(frame: pd.DataFrame, result_sheets: dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -139,7 +152,7 @@ def dataframe_records(frame: pd.DataFrame, limit: int = 250) -> list[dict[str, A
         return []
     sample = frame.head(limit).copy()
     sample = sample.where(pd.notna(sample), None)
-    return jsonable_encoder(sample.to_dict(orient="records"))
+    return jsonable_encoder(sanitize_for_json(sample.to_dict(orient="records")))
 
 
 def build_biomass_payload(
@@ -663,24 +676,28 @@ async def calculate(
                 json.dumps(bundle, ensure_ascii=False, indent=2).encode("utf-8"),
             )
 
-        return {
-            "calculationScope": scope,
-            "biomass": biomass_payload,
-            "economic": economic_payload,
-            "downloads": {
-                "biomassSummary": serialize_download_payload(SUMMARY_OUTPUT_FILENAME, summary_bytes)
-                if scope in {"biomass_only", "biomass_and_economic"}
-                else None,
-                "biomassDetail": serialize_download_payload(DETAIL_OUTPUT_FILENAME, detail_bytes)
-                if scope in {"biomass_only", "biomass_and_economic"}
-                else None,
-                "biomassComponent": serialize_download_payload(COMPONENT_OUTPUT_FILENAME, component_bytes)
-                if scope in {"biomass_only", "biomass_and_economic"} and component_bytes is not None
-                else None,
-                "economicReport": economic_report_download,
-                "economicJson": economic_json_download,
-            },
-        }
+        return jsonable_encoder(
+            sanitize_for_json(
+                {
+                    "calculationScope": scope,
+                    "biomass": biomass_payload,
+                    "economic": economic_payload,
+                    "downloads": {
+                        "biomassSummary": serialize_download_payload(SUMMARY_OUTPUT_FILENAME, summary_bytes)
+                        if scope in {"biomass_only", "biomass_and_economic"}
+                        else None,
+                        "biomassDetail": serialize_download_payload(DETAIL_OUTPUT_FILENAME, detail_bytes)
+                        if scope in {"biomass_only", "biomass_and_economic"}
+                        else None,
+                        "biomassComponent": serialize_download_payload(COMPONENT_OUTPUT_FILENAME, component_bytes)
+                        if scope in {"biomass_only", "biomass_and_economic"} and component_bytes is not None
+                        else None,
+                        "economicReport": economic_report_download,
+                        "economicJson": economic_json_download,
+                    },
+                }
+            )
+        )
     except Exception as exc:  # noqa: BLE001
         LOG.exception("Failed to assemble calculate response.")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
