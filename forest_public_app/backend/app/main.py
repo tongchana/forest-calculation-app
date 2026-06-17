@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import sys
 import tempfile
@@ -11,6 +12,7 @@ from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pandas as pd
+from fastapi.encoders import jsonable_encoder
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -39,6 +41,7 @@ COMPONENT_OUTPUT_FILENAME = "forest_component_summary.xlsx"
 PROFILE_OUTPUT_FILENAME = "profile_diagram_outputs.zip"
 ECONOMIC_OUTPUT_FILENAME = "forest_economic_report.xlsx"
 ECONOMIC_JSON_FILENAME = "forest_economic_report.json"
+LOG = logging.getLogger(__name__)
 
 
 def parse_cors_origins() -> list[str]:
@@ -135,7 +138,58 @@ def dataframe_records(frame: pd.DataFrame, limit: int = 250) -> list[dict[str, A
         return []
     sample = frame.head(limit).copy()
     sample = sample.where(pd.notna(sample), None)
-    return sample.to_dict(orient="records")
+    return jsonable_encoder(sample.to_dict(orient="records"))
+
+
+def build_biomass_payload(
+    result_sheets: dict[str, pd.DataFrame],
+    plot_area_ha: float,
+    rai_per_hectare: float,
+    sheet_groups: list[dict[str, object]] | None,
+) -> dict[str, Any]:
+    summary_all = result_sheets.get("SUMMARY_ALL", pd.DataFrame())
+    summary_biomass = result_sheets.get("SUMMARY_BIOMASS", pd.DataFrame())
+    summary_volume = result_sheets.get("SUMMARY_VOLUME", pd.DataFrame())
+    summary_shannon = result_sheets.get("SUMMARY_SHANNON", pd.DataFrame())
+    unmatched = result_sheets.get("CHECK_UNMATCHED_SPECIES", pd.DataFrame())
+
+    try:
+        metrics = [metric.model_dump() for metric in build_metrics(summary_all, unmatched, result_sheets)]
+    except Exception:  # noqa: BLE001
+        LOG.exception("Failed to build biomass metrics.")
+        metrics = []
+
+    try:
+        component_summaries = build_component_biomass_summary(
+            result_sheets=result_sheets,
+            sheet_groups=sheet_groups,
+            plot_area_ha=plot_area_ha,
+            rai_per_hectare=rai_per_hectare,
+        )
+    except Exception:  # noqa: BLE001
+        LOG.exception("Failed to build biomass component summaries.")
+        component_summaries = []
+
+    previews: dict[str, list[dict[str, Any]]] = {}
+    preview_frames = {
+        "summaryAll": summary_all,
+        "summaryBiomass": summary_biomass,
+        "summaryVolume": summary_volume,
+        "summaryShannon": summary_shannon,
+        "unmatchedSpecies": unmatched,
+    }
+    for preview_key, frame in preview_frames.items():
+        try:
+            previews[preview_key] = dataframe_records(frame)
+        except Exception:  # noqa: BLE001
+            LOG.exception("Failed to serialize biomass preview '%s'.", preview_key)
+            previews[preview_key] = []
+
+    return {
+        "metrics": metrics,
+        "componentSummaries": component_summaries,
+        "previews": previews,
+    }
 
 
 def serialize_download_payload(filename: str, content: bytes) -> dict[str, str]:
@@ -563,30 +617,14 @@ async def calculate(
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    summary_all = result_sheets.get("SUMMARY_ALL", pd.DataFrame())
-    summary_biomass = result_sheets.get("SUMMARY_BIOMASS", pd.DataFrame())
-    summary_volume = result_sheets.get("SUMMARY_VOLUME", pd.DataFrame())
-    summary_shannon = result_sheets.get("SUMMARY_SHANNON", pd.DataFrame())
-    unmatched = result_sheets.get("CHECK_UNMATCHED_SPECIES", pd.DataFrame())
-
     biomass_payload = None
     if scope in {"biomass_only", "biomass_and_economic"}:
-        biomass_payload = {
-            "metrics": [metric.model_dump() for metric in build_metrics(summary_all, unmatched, result_sheets)],
-            "componentSummaries": build_component_biomass_summary(
-                result_sheets=result_sheets,
-                sheet_groups=parsed_sheet_groups,
-                plot_area_ha=plot_area_ha,
-                rai_per_hectare=rai_per_hectare,
-            ),
-            "previews": {
-                "summaryAll": dataframe_records(summary_all),
-                "summaryBiomass": dataframe_records(summary_biomass),
-                "summaryVolume": dataframe_records(summary_volume),
-                "summaryShannon": dataframe_records(summary_shannon),
-                "unmatchedSpecies": dataframe_records(unmatched),
-            },
-        }
+        biomass_payload = build_biomass_payload(
+            result_sheets=result_sheets,
+            sheet_groups=parsed_sheet_groups,
+            plot_area_ha=plot_area_ha,
+            rai_per_hectare=rai_per_hectare,
+        )
 
     economic_payload = None
     economic_report_download = None
