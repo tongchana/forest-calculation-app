@@ -226,6 +226,8 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
   const [activeStepId, setActiveStepId] = useState<(typeof workflowSectionIds)[number]>("upload-workbook");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const groupsRef = useRef<SheetGroup[]>([]);
+  const economicInputsRef = useRef<Record<string, EconomicInputState>>({});
 
   useEffect(() => {
     async function loadConfig() {
@@ -275,7 +277,7 @@ export default function Page() {
   }, []);
 
   useEffect(() => {
-    setEconomicInputs((current) => {
+    replaceEconomicInputs((current) => {
       const next: Record<string, EconomicInputState> = {};
       groups.forEach((group) => {
         next[group.id] = current[group.id] ?? {
@@ -412,11 +414,11 @@ export default function Page() {
       }
       const data = (await response.json()) as { sheetNames: string[] };
       setSheetNames(data.sheetNames ?? []);
-      setGroups([]);
+      replaceGroups([]);
       setMessage(`Detected ${data.sheetNames.length} worksheet(s).`);
     } catch (inspectError) {
       setSheetNames([]);
-      setGroups([]);
+      replaceGroups([]);
       setError(describeApiError(inspectError));
     } finally {
       setInspectBusy(false);
@@ -425,7 +427,7 @@ export default function Page() {
 
   function resetFileState() {
     setSheetNames([]);
-    setGroups([]);
+    replaceGroups([]);
     setResult(null);
     setMessage(null);
     setError(null);
@@ -465,7 +467,7 @@ export default function Page() {
   }
 
   function addGroup() {
-    setGroups((current) => [
+    replaceGroups((current) => [
       ...current,
       {
         id: crypto.randomUUID(),
@@ -476,15 +478,15 @@ export default function Page() {
   }
 
   function updateGroup(groupId: string, patch: Partial<SheetGroup>) {
-    setGroups((current) => current.map((group) => (group.id === groupId ? { ...group, ...patch } : group)));
+    replaceGroups((current) => current.map((group) => (group.id === groupId ? { ...group, ...patch } : group)));
   }
 
   function removeGroup(groupId: string) {
-    setGroups((current) => current.filter((group) => group.id !== groupId));
+    replaceGroups((current) => current.filter((group) => group.id !== groupId));
   }
 
   function toggleSheet(groupId: string, sheetName: string) {
-    setGroups((current) =>
+    replaceGroups((current) =>
       current.map((group) => {
         if (group.id !== groupId) {
           return group;
@@ -498,8 +500,22 @@ export default function Page() {
     );
   }
 
+  function replaceGroups(nextGroupsOrUpdater: SheetGroup[] | ((current: SheetGroup[]) => SheetGroup[])) {
+    const nextGroups = typeof nextGroupsOrUpdater === "function" ? nextGroupsOrUpdater(groupsRef.current) : nextGroupsOrUpdater;
+    groupsRef.current = nextGroups;
+    setGroups(nextGroups);
+  }
+
+  function replaceEconomicInputs(
+    nextInputsOrUpdater: Record<string, EconomicInputState> | ((current: Record<string, EconomicInputState>) => Record<string, EconomicInputState>),
+  ) {
+    const nextInputs = typeof nextInputsOrUpdater === "function" ? nextInputsOrUpdater(economicInputsRef.current) : nextInputsOrUpdater;
+    economicInputsRef.current = nextInputs;
+    setEconomicInputs(nextInputs);
+  }
+
   function updateEconomicInput(groupId: string, patch: Partial<EconomicInputState>) {
-    setEconomicInputs((current) => ({
+    replaceEconomicInputs((current) => ({
       ...current,
       [groupId]: {
         ...(current[groupId] ?? {
@@ -516,10 +532,18 @@ export default function Page() {
   }
 
   async function handleCalculate() {
+    if (busy) {
+      return;
+    }
     if (!workbookFile) {
       setError("Upload a completed workbook before calculating.");
       return;
     }
+
+    const currentGroups = groupsRef.current;
+    const currentValidGroups = normaliseGroupPayload(currentGroups);
+    const currentEconomicInputs = economicInputsRef.current;
+    const currentEconomicInputGroups = currentGroups.filter((group) => group.name.trim() && group.sheetNames.length > 0);
 
     setBusy(true);
     setError(null);
@@ -529,17 +553,17 @@ export default function Page() {
     formData.append("file", workbookFile);
     formData.append("plot_area_ha", String(plotAreaHa));
     formData.append("rai_per_hectare", String(raiPerHectare));
-    formData.append("sheet_groups", JSON.stringify(validGroups));
+    formData.append("sheet_groups", JSON.stringify(currentValidGroups));
     formData.append("calculation_scope", calculationScope);
     if (economicModeSelected) {
-      const economicPayload = economicInputGroups.map((group) => ({
+      const economicPayload = currentEconomicInputGroups.map((group) => ({
         component_name: group.name.trim(),
-        component_area_rai: economicInputs[group.id]?.componentAreaRai ?? 0,
-        canopy_cover_percent: economicInputs[group.id]?.canopyCoverPercent ?? 0,
-        canopy_layer_count: economicInputs[group.id]?.canopyLayerCount ?? 0,
-        soil_depth_m: economicInputs[group.id]?.soilDepthM ?? 0,
-        annual_rainfall_mm: economicInputs[group.id]?.annualRainfallMm ?? 0,
-        topography_score: economicInputs[group.id]?.topographyScore ?? 0,
+        component_area_rai: currentEconomicInputs[group.id]?.componentAreaRai ?? 0,
+        canopy_cover_percent: currentEconomicInputs[group.id]?.canopyCoverPercent ?? 0,
+        canopy_layer_count: currentEconomicInputs[group.id]?.canopyLayerCount ?? 0,
+        soil_depth_m: currentEconomicInputs[group.id]?.soilDepthM ?? 0,
+        annual_rainfall_mm: currentEconomicInputs[group.id]?.annualRainfallMm ?? 0,
+        topography_score: currentEconomicInputs[group.id]?.topographyScore ?? 0,
       }));
       formData.append("economic_inputs", JSON.stringify(economicPayload));
     }

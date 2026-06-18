@@ -36,11 +36,30 @@ def safe_sheet_name(name: str, existing_names: set[str]) -> str:
     return candidate
 
 
-def _apply_cell_style(cell, *, bold: bool = False, fill=None, align: str = "left", border: Side = THIN_SIDE, size: int = 12):
-    cell.font = Font(name="Aptos", size=size, bold=bold)
+REPORT_FONT_NAME = "TH Sarabun New"
+REPORT_FONT_SIZE = 16
+NUMBER_FORMAT = "#,##0.00"
+ECOSYSTEM_TOTAL_KEYS = (
+    "soil",
+    "nitrogen",
+    "phosphorus",
+    "potassium",
+    "water_regulation",
+    "warming",
+    "co2_absorption",
+)
+
+
+def _apply_cell_style(cell, *, bold: bool = False, fill=None, align: str = "left", border: Side = THIN_SIDE, size: int = REPORT_FONT_SIZE):
+    cell.font = Font(name=REPORT_FONT_NAME, size=REPORT_FONT_SIZE, bold=bold)
     cell.alignment = Alignment(horizontal=align, vertical="center", wrap_text=True)
     cell.fill = fill or WHITE_FILL
     cell.border = Border(left=border, right=border, top=border, bottom=border)
+
+
+def _apply_number_format(cell) -> None:
+    if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
+        cell.number_format = NUMBER_FORMAT
 
 
 def _set_table_header(ws, row: int, headers: list[str], fills: list[PatternFill] | None = None) -> None:
@@ -80,6 +99,7 @@ def _write_frame(ws, start_row: int, title: str, frame: pd.DataFrame) -> int:
             cell = ws.cell(start_row, column_index, value=value)
             align = "right" if isinstance(value, (int, float)) else "left"
             _apply_cell_style(cell, fill=WHITE_FILL, align=align)
+            _apply_number_format(cell)
         start_row += 1
     return start_row + 1
 
@@ -138,6 +158,7 @@ def _write_component_table(
                 align=align,
                 bold=is_total,
             )
+            _apply_number_format(ws.cell(start_row, column_index))
         start_row += 1
     return start_row + 1
 
@@ -195,7 +216,6 @@ def _build_master_rows(outputs: dict[str, pd.DataFrame], bundle: dict[str, objec
     component_summaries = _component_value_lookup(bundle.get("forest_economics", {}).get("componentSummaries", []))
     regeneration = _component_value_lookup(bundle.get("regeneration_loss", {}).get("componentSummaries", []))
     ecosystem = _component_value_lookup(bundle.get("ecosystem_loss", {}).get("componentSummaries", []))
-    future = _component_value_lookup(bundle.get("wood_future_value", {}).get("componentSummaries", []))
     summary_all = _summary_all_lookup(outputs)
 
     def collect(field_getter):
@@ -214,9 +234,6 @@ def _build_master_rows(outputs: dict[str, pd.DataFrame], bundle: dict[str, objec
         ("การสูญเสียมูลค่าทางนิเวศวิทยา (ทางตรง)", "", None),
         ("การสูญเสียเนื้อไม้ (ลูกบาศก์เมตร)", "", collect(lambda component_id: component_summaries.get(component_id, {}).get("total_wood_loss_m3"))),
         ("การสูญเสียเนื้อไม้ (บาท)", "", collect(lambda component_id: component_summaries.get(component_id, {}).get("total_wood_value_baht"))),
-        ("มูลค่าเพิ่มรายปี (บาท)", "", collect(lambda component_id: component_summaries.get(component_id, {}).get("total_annual_wood_value_baht"))),
-        ("มูลค่าไม้ในอนาคต FV (บาท)", "", collect(lambda component_id: (future.get(component_id, {}).get("period_rows") or [{}])[-1].get("future_value_baht"))),
-        ("มูลค่าไม้ในปัจจุบัน PV (บาท)", "", collect(lambda component_id: (future.get(component_id, {}).get("period_rows") or [{}])[-1].get("present_value_baht"))),
         ("การสูญเสียมูลค่าไม้หนุ่ม (บาท)", "27 บาท/ต้น/ไร่", collect(lambda component_id: regeneration.get(component_id, {}).get("sapling_loss_baht"))),
         ("การสูญเสียมูลค่ากล้าไม้ (บาท)", "6 บาท/ต้น/ไร่", collect(lambda component_id: regeneration.get(component_id, {}).get("seedling_loss_baht"))),
         ("การประเมินมูลค่าการสูญเสียทางระบบนิเวศ", "", None),
@@ -227,7 +244,7 @@ def _build_master_rows(outputs: dict[str, pd.DataFrame], bundle: dict[str, objec
         ("การสูญเสียระบบควบคุมการดูดซับ-ระบายน้ำ", "1,800 บาท/เที่ยว", collect(lambda component_id: _sum_ecosystem_detail(bundle, component_id, "water_regulation"))),
         ("อากาศที่ร้อนขึ้น", "2.5 บาท/ชั่วโมง", collect(lambda component_id: _sum_ecosystem_detail(bundle, component_id, "warming"))),
         ("การดูดซับก๊าซคาร์บอนไดออกไซด์", "793.5 บาท/ตัน", collect(lambda component_id: _sum_ecosystem_detail(bundle, component_id, "co2_absorption"))),
-        ("รวม", "", collect(lambda component_id: _master_total_for_component(outputs, bundle, component_id))),
+        ("รวม", "", collect(lambda component_id: _master_ecosystem_total_for_component(bundle, component_id))),
     ]
 
 
@@ -265,16 +282,8 @@ class _dict_to_ecosystem_proxy:
         self.__dict__.update(payload)
 
 
-def _master_total_for_component(outputs: dict[str, pd.DataFrame], bundle: dict[str, object], component_id: str) -> float | None:
-    forest = _component_value_lookup(bundle.get("forest_economics", {}).get("componentSummaries", [])).get(component_id, {})
-    regen = _component_value_lookup(bundle.get("regeneration_loss", {}).get("componentSummaries", [])).get(component_id, {})
-    eco = _component_value_lookup(bundle.get("ecosystem_loss", {}).get("componentSummaries", [])).get(component_id, {})
-    values = [
-        forest.get("total_wood_value_baht"),
-        forest.get("total_annual_wood_value_baht"),
-        regen.get("total_regeneration_loss_baht"),
-        eco.get("total_ecosystem_loss_baht_per_year"),
-    ]
+def _master_ecosystem_total_for_component(bundle: dict[str, object], component_id: str) -> float | None:
+    values = [_sum_ecosystem_detail(bundle, component_id, impact_key) for impact_key in ECOSYSTEM_TOTAL_KEYS]
     numeric = [float(value) for value in values if isinstance(value, (int, float))]
     return sum(numeric) if numeric else None
 
@@ -305,11 +314,13 @@ def _write_master_summary(ws, outputs: dict[str, pd.DataFrame], bundle: dict[str
             value = values.get(component_id)
             ws.cell(current_row, offset, value)
             _apply_cell_style(ws.cell(current_row, offset), fill=WHITE_FILL, align="right")
+            _apply_number_format(ws.cell(current_row, offset))
             if isinstance(value, (int, float)):
                 total += float(value)
                 has_total = True
         ws.cell(current_row, len(headers), total if has_total else None)
         _apply_cell_style(ws.cell(current_row, len(headers)), fill=TOTAL_FILL, align="right", bold=True)
+        _apply_number_format(ws.cell(current_row, len(headers)))
         current_row += 1
     ws.freeze_panes = "C3"
     ws.sheet_view.showGridLines = False
