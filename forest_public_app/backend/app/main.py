@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import base64
+import copy
+import hashlib
 import json
 import logging
 import os
 import sys
 import tempfile
+import threading
+import time
+from collections import OrderedDict
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -43,7 +48,13 @@ COMPONENT_OUTPUT_FILENAME = "forest_component_summary.xlsx"
 PROFILE_OUTPUT_FILENAME = "profile_diagram_outputs.zip"
 ECONOMIC_OUTPUT_FILENAME = "forest_economic_report.xlsx"
 ECONOMIC_JSON_FILENAME = "forest_economic_report.json"
+WORKFLOW_CACHE_TTL_SECONDS = int(os.getenv("WORKFLOW_CACHE_TTL_SECONDS", "3600"))
+WORKFLOW_CACHE_MAX_ENTRIES = int(os.getenv("WORKFLOW_CACHE_MAX_ENTRIES", "8"))
 LOG = logging.getLogger(__name__)
+
+WorkflowCacheValue = tuple[bytes, bytes, bytes | None, dict[str, pd.DataFrame]]
+WORKFLOW_CACHE: OrderedDict[str, tuple[float, WorkflowCacheValue]] = OrderedDict()
+WORKFLOW_CACHE_LOCK = threading.RLock()
 
 
 def parse_cors_origins() -> list[str]:
@@ -85,6 +96,66 @@ def sanitize_for_json(value: Any) -> Any:
     if isinstance(value, np.generic):
         return sanitize_for_json(value.item())
     return value
+
+
+def canonical_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def build_workflow_cache_key(
+    file_bytes: bytes,
+    plot_area_ha: float,
+    rai_per_hectare: float,
+    sheet_groups: list[dict[str, object]] | None,
+) -> str:
+    fingerprint = {
+        "file_sha256": hashlib.sha256(file_bytes).hexdigest(),
+        "plot_area_ha": float(plot_area_ha),
+        "rai_per_hectare": float(rai_per_hectare),
+        "sheet_groups": sheet_groups or [],
+    }
+    return hashlib.sha256(canonical_json(fingerprint).encode("utf-8")).hexdigest()
+
+
+def copy_result_sheets(result_sheets: dict[str, Any]) -> dict[str, Any]:
+    copied: dict[str, Any] = {}
+    for sheet_name, frame in result_sheets.items():
+        if isinstance(frame, pd.DataFrame):
+            copied[sheet_name] = frame.copy(deep=True)
+        else:
+            copied[sheet_name] = copy.deepcopy(frame)
+    return copied
+
+
+def copy_workflow_cache_value(value: WorkflowCacheValue) -> WorkflowCacheValue:
+    summary_bytes, detail_bytes, component_bytes, result_sheets = value
+    return summary_bytes, detail_bytes, component_bytes, copy_result_sheets(result_sheets)
+
+
+def get_cached_workflow(cache_key: str) -> WorkflowCacheValue | None:
+    if WORKFLOW_CACHE_TTL_SECONDS <= 0 or WORKFLOW_CACHE_MAX_ENTRIES <= 0:
+        return None
+    now = time.monotonic()
+    with WORKFLOW_CACHE_LOCK:
+        cached = WORKFLOW_CACHE.get(cache_key)
+        if cached is None:
+            return None
+        created_at, value = cached
+        if now - created_at > WORKFLOW_CACHE_TTL_SECONDS:
+            WORKFLOW_CACHE.pop(cache_key, None)
+            return None
+        WORKFLOW_CACHE.move_to_end(cache_key)
+        return copy_workflow_cache_value(value)
+
+
+def store_cached_workflow(cache_key: str, value: WorkflowCacheValue) -> None:
+    if WORKFLOW_CACHE_TTL_SECONDS <= 0 or WORKFLOW_CACHE_MAX_ENTRIES <= 0:
+        return
+    with WORKFLOW_CACHE_LOCK:
+        WORKFLOW_CACHE[cache_key] = (time.monotonic(), copy_workflow_cache_value(value))
+        WORKFLOW_CACHE.move_to_end(cache_key)
+        while len(WORKFLOW_CACHE) > WORKFLOW_CACHE_MAX_ENTRIES:
+            WORKFLOW_CACHE.popitem(last=False)
 
 
 def filter_primary_rows(frame: pd.DataFrame, result_sheets: dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -633,16 +704,31 @@ async def calculate(
     if scope != "biomass_only" and not ecosystem_inputs:
         raise HTTPException(status_code=400, detail="Economic calculation requires per-component economic inputs.")
 
-    try:
-        summary_bytes, detail_bytes, component_bytes, result_sheets = run_uploaded_workflow(
-            uploaded_filename=file.filename,
-            file_bytes=file_bytes,
-            plot_area_ha=plot_area_ha,
-            rai_per_hectare=rai_per_hectare,
-            sheet_groups=parsed_sheet_groups,
-        )
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    workflow_cache_key = build_workflow_cache_key(
+        file_bytes=file_bytes,
+        plot_area_ha=plot_area_ha,
+        rai_per_hectare=rai_per_hectare,
+        sheet_groups=parsed_sheet_groups,
+    )
+    cached_workflow = get_cached_workflow(workflow_cache_key)
+    if cached_workflow is not None:
+        LOG.info("Using cached biomass workflow result.")
+        summary_bytes, detail_bytes, component_bytes, result_sheets = cached_workflow
+    else:
+        try:
+            summary_bytes, detail_bytes, component_bytes, result_sheets = run_uploaded_workflow(
+                uploaded_filename=file.filename,
+                file_bytes=file_bytes,
+                plot_area_ha=plot_area_ha,
+                rai_per_hectare=rai_per_hectare,
+                sheet_groups=parsed_sheet_groups,
+            )
+            store_cached_workflow(
+                workflow_cache_key,
+                (summary_bytes, detail_bytes, component_bytes, result_sheets),
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     try:
         biomass_payload = None
