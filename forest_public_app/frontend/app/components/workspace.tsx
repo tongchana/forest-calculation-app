@@ -416,9 +416,9 @@ export function DownloadButton({
 
 export function MetricTile({ label, value, help }: { label: string; value: string | number; help?: string }) {
   return (
-    <article className="rounded-3xl border border-[#DDE5D5] bg-[#F6F8F4] p-5">
+    <article className="rounded-3xl border border-[#DDE5D5] bg-[#F6F8F4] p-5 shadow-[0_14px_34px_rgba(31,94,59,0.04)]">
       <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#667085]">{label}</p>
-      <p className="mt-3 text-3xl font-semibold text-[#1F2933]">{value}</p>
+      <p className="mt-3 break-words text-[2rem] font-semibold leading-tight tabular-nums text-[#1F2933]">{value}</p>
       {help && <p className="mt-2 text-sm leading-6 text-[#667085]">{help}</p>}
     </article>
   );

@@ -244,7 +244,7 @@ def _build_master_rows(outputs: dict[str, pd.DataFrame], bundle: dict[str, objec
         ("การสูญเสียระบบควบคุมการดูดซับ-ระบายน้ำ", "1,800 บาท/เที่ยว", collect(lambda component_id: _sum_ecosystem_detail(bundle, component_id, "water_regulation"))),
         ("อากาศที่ร้อนขึ้น", "2.5 บาท/ชั่วโมง", collect(lambda component_id: _sum_ecosystem_detail(bundle, component_id, "warming"))),
         ("การดูดซับก๊าซคาร์บอนไดออกไซด์", "793.5 บาท/ตัน", collect(lambda component_id: _sum_ecosystem_detail(bundle, component_id, "co2_absorption"))),
-        ("รวม", "", collect(lambda component_id: _master_ecosystem_total_for_component(bundle, component_id))),
+        ("รวม", "", collect(lambda component_id: _master_loss_total_for_component(bundle, component_summaries, regeneration, component_id))),
     ]
 
 
@@ -284,6 +284,22 @@ class _dict_to_ecosystem_proxy:
 
 def _master_ecosystem_total_for_component(bundle: dict[str, object], component_id: str) -> float | None:
     values = [_sum_ecosystem_detail(bundle, component_id, impact_key) for impact_key in ECOSYSTEM_TOTAL_KEYS]
+    numeric = [float(value) for value in values if isinstance(value, (int, float))]
+    return sum(numeric) if numeric else None
+
+
+def _master_loss_total_for_component(
+    bundle: dict[str, object],
+    component_summaries: dict[str, dict[str, object]],
+    regeneration: dict[str, dict[str, object]],
+    component_id: str,
+) -> float | None:
+    values = [
+        component_summaries.get(component_id, {}).get("total_wood_value_baht"),
+        regeneration.get(component_id, {}).get("sapling_loss_baht"),
+        regeneration.get(component_id, {}).get("seedling_loss_baht"),
+        _master_ecosystem_total_for_component(bundle, component_id),
+    ]
     numeric = [float(value) for value in values if isinstance(value, (int, float))]
     return sum(numeric) if numeric else None
 

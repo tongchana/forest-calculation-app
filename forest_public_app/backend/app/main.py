@@ -32,7 +32,7 @@ if str(ROOT_DIR) not in sys.path:
 
 import run_forest_calculation as calc
 from cal_EIA.profile_diagram_lib import create_profile_template, render_workbook_profile_map
-from forest_economic_report import write_forest_economic_report
+from forest_economic_report import ECOSYSTEM_TOTAL_KEYS, _sum_ecosystem_detail, write_forest_economic_report
 from forest_ecosystem_loss import build_ecosystem_loss_detail_rows
 from forest_integration import EcosystemUserInput, calculate_forest_valuation_bundle_from_outputs
 
@@ -485,6 +485,18 @@ def build_economic_preview(bundle: dict[str, object]) -> dict[str, Any]:
         component_id = normalize_text(row.get("component_id"))
         eco_row = ecosystem_component_lookup.get(component_id, {})
         regen_row = regeneration_lookup.get(component_id, {})
+        report_ecosystem_total = sum(
+            float(value)
+            for value in (_sum_ecosystem_detail(bundle, component_id, impact_key) for impact_key in ECOSYSTEM_TOTAL_KEYS)
+            if isinstance(value, (int, float))
+        )
+        report_total_loss_values = [
+            row.get("total_wood_value_baht"),
+            regen_row.get("sapling_loss_baht"),
+            regen_row.get("seedling_loss_baht"),
+            report_ecosystem_total,
+        ]
+        report_total_loss = sum(float(value) for value in report_total_loss_values if isinstance(value, (int, float)))
         component_rows.append(
             {
                 "componentId": component_id,
@@ -497,7 +509,9 @@ def build_economic_preview(bundle: dict[str, object]) -> dict[str, Any]:
                 "totalAnnualWoodValueBaht": row.get("total_annual_wood_value_baht"),
                 "totalWoodValueBaht": row.get("total_wood_value_baht"),
                 "totalRegenerationLossBaht": regen_row.get("total_regeneration_loss_baht"),
-                "totalEcosystemLossBahtPerYear": eco_row.get("total_ecosystem_loss_baht_per_year"),
+                "totalEcosystemLossBahtPerYear": report_ecosystem_total,
+                "moduleEcosystemLossBahtPerYear": eco_row.get("total_ecosystem_loss_baht_per_year"),
+                "totalReportLossBaht": report_total_loss,
                 "warnings": row.get("warnings", []),
             }
         )
@@ -525,7 +539,18 @@ def build_economic_preview(bundle: dict[str, object]) -> dict[str, Any]:
     economic_metrics = [
         MetricCard(label="Economic components", value=format_metric_value(len(component_rows), 0), help_text="Grouped components included in the economic run"),
         MetricCard(label="Total wood loss", value=format_metric_value(grand_total.get("total_wood_loss_m3"), 3), help_text="Combined wood stock loss across grouped components"),
-        MetricCard(label="Annual wood value", value=format_metric_value(grand_total.get("total_annual_wood_value_baht"), 2), help_text="Annual wood increment value used by the future value module"),
+        MetricCard(
+            label="Total loss in report",
+            value=format_metric_value(
+                sum(
+                    float(row.get("totalReportLossBaht"))
+                    for row in component_rows
+                    if isinstance(row.get("totalReportLossBaht"), (int, float))
+                ),
+                2,
+            ),
+            help_text="Matches the MASTER_SUMMARY total row in the economic report",
+        ),
         MetricCard(
             label="Ecosystem loss / year",
             value=format_metric_value(

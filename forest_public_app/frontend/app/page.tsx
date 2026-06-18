@@ -58,6 +58,8 @@ type EconomicComponentSummary = {
   totalWoodValueBaht: number | null;
   totalRegenerationLossBaht: number | null;
   totalEcosystemLossBahtPerYear: number | null;
+  moduleEcosystemLossBahtPerYear: number | null;
+  totalReportLossBaht: number | null;
   warnings: string[];
 };
 
@@ -1091,9 +1093,17 @@ export default function Page() {
 
                   {result.economic && (
                     <div className="space-y-5">
-                      <div>
-                        <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#667085]">Economic summary</p>
-                        <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                      <div className="overflow-hidden rounded-[30px] border border-[#C9DDBF] bg-gradient-to-br from-[#F8FBF3] via-white to-[#EEF6EA] p-5 shadow-[0_18px_46px_rgba(31,94,59,0.07)]">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                          <div>
+                            <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#6A8F5D]">Economic summary</p>
+                            <h3 className="mt-2 text-2xl font-semibold text-[#1F2933]">Report-aligned valuation</h3>
+                          </div>
+                          <p className="max-w-xl text-sm leading-6 text-[#667085]">
+                            Total loss in report matches the MASTER_SUMMARY total row: wood value loss + regeneration loss + ecosystem loss rows.
+                          </p>
+                        </div>
+                        <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                           {result.economic.metrics.map((metric) => (
                             <MetricTile key={metric.label} help={metric.help_text} label={metric.label} value={metric.value} />
                           ))}
@@ -1103,7 +1113,7 @@ export default function Page() {
                       {economicRows.length > 0 && (
                         <div className="overflow-hidden rounded-[28px] border border-[#DDE5D5]">
                           <div className="overflow-x-auto">
-                            <table className="w-full min-w-[1100px] text-left text-sm">
+                            <table className="w-full min-w-[1250px] text-left text-sm">
                               <thead className="bg-[#F6F8F4] text-xs uppercase tracking-[0.18em] text-[#667085]">
                                 <tr>
                                   <th className="px-4 py-4">Component</th>
@@ -1116,11 +1126,12 @@ export default function Page() {
                                   <th className="px-4 py-4">Wood loss value</th>
                                   <th className="px-4 py-4">Regeneration loss</th>
                                   <th className="px-4 py-4">Ecosystem loss / year</th>
+                                  <th className="px-4 py-4">Total loss (report)</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-[#DDE5D5] bg-white">
                                 {economicRows.map((row) => (
-                                  <tr key={row.componentId}>
+                                  <tr key={row.componentId} className="transition hover:bg-[#F8FBF3]">
                                     <td className="px-4 py-4 font-semibold text-[#1F2933]">{row.componentName}</td>
                                     <td className="px-4 py-4">{formatMetricValue(row.componentAreaRai, 2)}</td>
                                     <td className="px-4 py-4 text-[#667085]">{row.forestTypes.join(", ") || "-"}</td>
@@ -1131,6 +1142,7 @@ export default function Page() {
                                     <td className="px-4 py-4">{formatMetricValue(row.totalWoodValueBaht, 2)}</td>
                                     <td className="px-4 py-4">{formatMetricValue(row.totalRegenerationLossBaht, 2)}</td>
                                     <td className="px-4 py-4">{formatMetricValue(row.totalEcosystemLossBahtPerYear, 2)}</td>
+                                    <td className="px-4 py-4 font-semibold tabular-nums text-[#1F5E3B]">{formatMetricValue(row.totalReportLossBaht, 2)}</td>
                                   </tr>
                                 ))}
                               </tbody>
