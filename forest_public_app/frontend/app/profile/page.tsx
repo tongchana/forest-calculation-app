@@ -31,9 +31,12 @@ type ProfileImage = {
 
 type ProfileResponse = {
   sheetNames: string[];
+  renderMode: "graphic" | "realistic";
   images: ProfileImage[];
   download: DownloadPayload;
 };
+
+type RenderMode = "graphic" | "realistic";
 
 const requiredColumns = ["Species", "Height", "Position", "Crown cover"];
 const profileSectionIds = [
@@ -71,6 +74,7 @@ export default function ProfilePage() {
   const [workbookFile, setWorkbookFile] = useState<File | null>(null);
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [result, setResult] = useState<ProfileResponse | null>(null);
+  const [renderMode, setRenderMode] = useState<RenderMode>("graphic");
   const [busy, setBusy] = useState(false);
   const [inspectBusy, setInspectBusy] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -225,6 +229,12 @@ export default function ProfilePage() {
     setDragActive(true);
   }
 
+  function handleRenderModeChange(mode: RenderMode) {
+    setRenderMode(mode);
+    setResult(null);
+    setMessage(null);
+  }
+
   function handleDragLeave(event: DragEvent<HTMLLabelElement>) {
     event.preventDefault();
     setDragActive(false);
@@ -247,6 +257,7 @@ export default function ProfilePage() {
 
     const formData = new FormData();
     formData.append("file", workbookFile);
+    formData.append("render_mode", renderMode);
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/profile/calculate`, {
@@ -259,7 +270,7 @@ export default function ProfilePage() {
       }
       const data = (await response.json()) as ProfileResponse;
       setResult(data);
-      setMessage(`Generated ${data.images.length} profile diagram(s).`);
+      setMessage(`Generated ${data.images.length} ${data.renderMode} profile diagram(s).`);
     } catch (calcError) {
       setResult(null);
       setError(describeApiError(calcError));
@@ -399,18 +410,48 @@ export default function ProfilePage() {
 
             <SectionCard
               dark
-              description="Rendering uses the existing profile API and stays focused on canopy profile diagrams only."
               eyebrow="Step 4"
               id="generate-profile-diagrams"
               title="Generate profile diagrams"
+              description="Choose the visual style before generating one diagram per worksheet."
             >
+              <div className="mb-5 grid gap-3 md:grid-cols-2">
+                <button
+                  className={`rounded-3xl border p-5 text-left transition ${
+                    renderMode === "graphic"
+                      ? "border-white bg-white text-[#1F5E3B] shadow-[0_12px_30px_rgba(0,0,0,0.16)]"
+                      : "border-white/30 bg-white/10 text-white hover:bg-white/15"
+                  }`}
+                  type="button"
+                  onClick={() => handleRenderModeChange("graphic")}
+                >
+                  <span className="block text-sm font-bold">Graphic</span>
+                  <span className={`mt-1 block text-sm leading-6 ${renderMode === "graphic" ? "text-[#55705F]" : "text-white/75"}`}>
+                    Color-coded canopy shapes for fast plan and profile reading.
+                  </span>
+                </button>
+                <button
+                  className={`rounded-3xl border p-5 text-left transition ${
+                    renderMode === "realistic"
+                      ? "border-white bg-white text-[#1F5E3B] shadow-[0_12px_30px_rgba(0,0,0,0.16)]"
+                      : "border-white/30 bg-white/10 text-white hover:bg-white/15"
+                  }`}
+                  type="button"
+                  onClick={() => handleRenderModeChange("realistic")}
+                >
+                  <span className="block text-sm font-bold">สมจริง</span>
+                  <span className={`mt-1 block text-sm leading-6 ${renderMode === "realistic" ? "text-[#55705F]" : "text-white/75"}`}>
+                    Sprite-based tree crowns, trunks, branches, and a measurement grid.
+                  </span>
+                </button>
+              </div>
               <button
                 className="inline-flex w-full items-center justify-center rounded-full bg-white px-6 py-4 text-sm font-bold text-[#1F5E3B] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45"
                 disabled={!canRender}
                 type="button"
                 onClick={handleCalculate}
               >
-                {busy ? "Rendering profile diagrams..." : "Generate profile diagrams"}
+                {busy ? "Rendering profile diagrams..." : `Generate ${renderMode === "graphic" ? "graphic" : "realistic"} profile diagrams`}
               </button>
               {!canRender && <Notice tone="warning">Upload a valid profile workbook and wait for inspection before rendering diagrams.</Notice>}
               {result && <Notice tone="success">Profile diagrams generated successfully. Review them below or download the ZIP package.</Notice>}
