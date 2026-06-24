@@ -28,6 +28,21 @@ EXPECTED_COLUMNS = [
     "crown_y_minus",
 ]
 
+# A named tree row must be complete.  Previously incomplete rows were silently
+# dropped, which could make a species appear to disappear from a profile.
+PROFILE_NUMERIC_COLUMNS = [
+    "no",
+    "girth_cm",
+    "height_m",
+    "first_branch_m",
+    "x",
+    "y",
+    "crown_x_plus",
+    "crown_x_minus",
+    "crown_y_plus",
+    "crown_y_minus",
+]
+
 PLOT_PALETTE = [
     "#43a047",
     "#1e88e5",
@@ -79,19 +94,49 @@ def load_profile_sheet(excel_path: Path, sheet_name: str) -> pd.DataFrame:
     raw = pd.read_excel(excel_path, sheet_name=sheet_name, header=[0, 1])
     raw.columns = EXPECTED_COLUMNS
     df = raw.copy()
-    df["species"] = df["species"].astype(str).str.strip()
-    for column in EXPECTED_COLUMNS:
-        if column != "species":
-            df[column] = pd.to_numeric(df[column], errors="coerce")
+    df["species"] = df["species"].fillna("").astype(str).str.strip()
+    for column in PROFILE_NUMERIC_COLUMNS:
+        df[column] = pd.to_numeric(df[column], errors="coerce")
 
-    df = df.dropna(subset=["species", "x", "y", "height_m"])
-    df = df[df["species"].ne("")]
-    return df.reset_index(drop=True)
+    named_tree_rows = df["species"].ne("")
+    incomplete_rows = named_tree_rows & df[PROFILE_NUMERIC_COLUMNS].isna().any(axis=1)
+    if incomplete_rows.any():
+        details = []
+        for row_index, row in df.loc[incomplete_rows].iterrows():
+            missing_columns = [
+                column
+                for column in PROFILE_NUMERIC_COLUMNS
+                if pd.isna(row[column])
+            ]
+            # Two header rows precede the DataFrame, so index 0 is Excel row 3.
+            details.append(
+                f"row {row_index + 3} ({row['species']}): {', '.join(missing_columns)}"
+            )
+        raise ValueError(
+            f"Sheet '{sheet_name}' has incomplete tree profile data: "
+            + "; ".join(details)
+        )
+
+    return df.loc[named_tree_rows].reset_index(drop=True)
+
+
+def audit_profile_sheet(excel_path: Path, sheet_name: str) -> dict[str, object]:
+    """Return the exact tree and species counts that will be rendered."""
+    df = load_profile_sheet(excel_path, sheet_name)
+    species = sorted(df["species"].unique().tolist())
+    return {
+        "sheetName": sheet_name,
+        "treeCount": int(len(df)),
+        "speciesCount": int(len(species)),
+        "species": species,
+    }
 
 
 def list_profile_sheets(excel_path: Path) -> list[str]:
-    workbook = pd.ExcelFile(excel_path)
-    return workbook.sheet_names
+    # Explicitly close the workbook so temporary uploaded files can be removed
+    # reliably on Windows after profile generation finishes.
+    with pd.ExcelFile(excel_path) as workbook:
+        return workbook.sheet_names
 
 
 def build_species_color_map(species_names: list[str]) -> dict[str, str]:

@@ -29,10 +29,18 @@ type ProfileImage = {
   contentBase64: string;
 };
 
+type ProfileSheetValidation = {
+  sheetName: string;
+  treeCount: number;
+  speciesCount: number;
+  species: string[];
+};
+
 type ProfileResponse = {
   sheetNames: string[];
   renderMode: "graphic" | "realistic";
   images: ProfileImage[];
+  validation: ProfileSheetValidation[];
   download: DownloadPayload;
 };
 
@@ -270,7 +278,10 @@ export default function ProfilePage() {
       }
       const data = (await response.json()) as ProfileResponse;
       setResult(data);
-      setMessage(`Generated ${data.images.length} ${data.renderMode} profile diagram(s).`);
+      const auditSummary = data.validation
+        .map((sheet) => `${sheet.sheetName}: ${sheet.treeCount} trees, ${sheet.speciesCount} species`)
+        .join(" | ");
+      setMessage(`Generated ${data.images.length} ${data.renderMode} profile diagram(s). Verified ${auditSummary}.`);
     } catch (calcError) {
       setResult(null);
       setError(describeApiError(calcError));

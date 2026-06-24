@@ -32,7 +32,12 @@ if str(ROOT_DIR) not in sys.path:
 
 import run_forest_calculation as calc
 from cal_EIA.generate_profile_realistic import render_freeform_sprite_experiment
-from cal_EIA.profile_diagram_lib import create_profile_template, list_profile_sheets, render_workbook_profile_map
+from cal_EIA.profile_diagram_lib import (
+    audit_profile_sheet,
+    create_profile_template,
+    list_profile_sheets,
+    render_workbook_profile_map,
+)
 from forest_economic_report import ECOSYSTEM_TOTAL_KEYS, _sum_ecosystem_detail, write_forest_economic_report
 from forest_ecosystem_loss import build_ecosystem_loss_detail_rows
 from forest_integration import EcosystemUserInput, calculate_forest_valuation_bundle_from_outputs
@@ -302,17 +307,25 @@ def ensure_profile_template() -> Path:
     return PROFILE_TEMPLATE_FILE
 
 
-def build_profile_outputs(uploaded_filename: str, file_bytes: bytes, render_mode: str) -> tuple[list[dict[str, str]], bytes, str]:
+def build_profile_outputs(
+    uploaded_filename: str,
+    file_bytes: bytes,
+    render_mode: str,
+) -> tuple[list[dict[str, str]], bytes, str, list[dict[str, object]]]:
     with tempfile.TemporaryDirectory() as tmp_dir:
         temp_dir = Path(tmp_dir)
         uploaded_path = temp_dir / uploaded_filename
         uploaded_path.write_bytes(file_bytes)
 
         output_dir = temp_dir / "profile_images"
+        sheet_names = list_profile_sheets(uploaded_path)
+        # Validate every named tree before drawing any output. This prevents a
+        # malformed row from being silently excluded from a generated profile.
+        validation = [audit_profile_sheet(uploaded_path, sheet_name) for sheet_name in sheet_names]
         if render_mode == "realistic":
             rendered_items = [
                 (sheet_name, render_freeform_sprite_experiment(uploaded_path, sheet_name, output_dir))
-                for sheet_name in list_profile_sheets(uploaded_path)
+                for sheet_name in sheet_names
             ]
             output_filename = PROFILE_REALISTIC_OUTPUT_FILENAME
         else:
@@ -334,7 +347,7 @@ def build_profile_outputs(uploaded_filename: str, file_bytes: bytes, render_mode
         with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as zip_file:
             for image_path in image_paths:
                 zip_file.write(image_path, arcname=image_path.name)
-        return payloads, zip_path.read_bytes(), output_filename
+        return payloads, zip_path.read_bytes(), output_filename, validation
 
 
 def parse_sheet_groups(sheet_groups_raw: str | None) -> list[dict[str, object]] | None:
@@ -837,7 +850,9 @@ async def calculate_profile(
         raise HTTPException(status_code=400, detail="render_mode must be either 'graphic' or 'realistic'.")
 
     try:
-        images, zip_bytes, output_filename = build_profile_outputs(file.filename, file_bytes, render_mode)
+        images, zip_bytes, output_filename, validation = build_profile_outputs(file.filename, file_bytes, render_mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -845,6 +860,7 @@ async def calculate_profile(
         "sheetNames": [item["sheetName"] for item in images],
         "renderMode": render_mode,
         "images": images,
+        "validation": validation,
         "download": {
             "filename": output_filename,
             "contentBase64": base64.b64encode(zip_bytes).decode("ascii"),
