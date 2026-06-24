@@ -22,7 +22,8 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 import run_forest_calculation as calc
-from cal_EIA.profile_diagram_lib import create_profile_template, render_workbook_profile_map
+from cal_EIA.generate_profile_realistic import render_freeform_sprite_experiment
+from cal_EIA.profile_diagram_lib import create_profile_template, list_profile_sheets, render_workbook_profile_map
 
 TEMPLATE_FILE = ROOT_DIR / "template.xlsx"
 MASTER_FILE = ROOT_DIR / "species_reference_master_v1.xlsx"
@@ -34,6 +35,7 @@ SUMMARY_OUTPUT_FILENAME = "forest_calculation_output_summary_by_site.xlsx"
 DETAIL_OUTPUT_FILENAME = "forest_calculation_output_details.xlsx"
 COMPONENT_OUTPUT_FILENAME = "forest_component_summary.xlsx"
 PROFILE_OUTPUT_FILENAME = "profile_diagram_outputs.zip"
+PROFILE_REALISTIC_OUTPUT_FILENAME = "profile_diagram_realistic_outputs.zip"
 
 
 def parse_cors_origins() -> list[str]:
@@ -133,14 +135,22 @@ def ensure_profile_template() -> Path:
     return PROFILE_TEMPLATE_FILE
 
 
-def build_profile_outputs(uploaded_filename: str, file_bytes: bytes) -> tuple[list[dict[str, str]], bytes]:
+def build_profile_outputs(uploaded_filename: str, file_bytes: bytes, render_mode: str) -> tuple[list[dict[str, str]], bytes, str]:
     with tempfile.TemporaryDirectory() as tmp_dir:
         temp_dir = Path(tmp_dir)
         uploaded_path = temp_dir / uploaded_filename
         uploaded_path.write_bytes(file_bytes)
 
         output_dir = temp_dir / "profile_images"
-        rendered_items = render_workbook_profile_map(uploaded_path, output_dir)
+        if render_mode == "realistic":
+            rendered_items = [
+                (sheet_name, render_freeform_sprite_experiment(uploaded_path, sheet_name, output_dir))
+                for sheet_name in list_profile_sheets(uploaded_path)
+            ]
+            output_filename = PROFILE_REALISTIC_OUTPUT_FILENAME
+        else:
+            rendered_items = render_workbook_profile_map(uploaded_path, output_dir)
+            output_filename = PROFILE_OUTPUT_FILENAME
         payloads: list[dict[str, str]] = []
         image_paths: list[Path] = []
         for sheet_name, image_path in rendered_items:
@@ -153,11 +163,11 @@ def build_profile_outputs(uploaded_filename: str, file_bytes: bytes) -> tuple[li
                 }
             )
 
-        zip_path = temp_dir / PROFILE_OUTPUT_FILENAME
+        zip_path = temp_dir / output_filename
         with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as zip_file:
             for image_path in image_paths:
                 zip_file.write(image_path, arcname=image_path.name)
-        return payloads, zip_path.read_bytes()
+        return payloads, zip_path.read_bytes(), output_filename
 
 
 def parse_sheet_groups(sheet_groups_raw: str | None) -> list[dict[str, object]] | None:
@@ -343,21 +353,28 @@ async def calculate(
 
 
 @app.post("/api/profile/calculate")
-async def calculate_profile(file: UploadFile = File(...)) -> dict[str, Any]:
+async def calculate_profile(
+    file: UploadFile = File(...),
+    render_mode: str = Form(default="graphic"),
+) -> dict[str, Any]:
     file_bytes = await file.read()
     if not file.filename or not file.filename.lower().endswith(".xlsx"):
         raise HTTPException(status_code=400, detail="Please upload a valid .xlsx file.")
 
+    if render_mode not in {"graphic", "realistic"}:
+        raise HTTPException(status_code=400, detail="render_mode must be either 'graphic' or 'realistic'.")
+
     try:
-        images, zip_bytes = build_profile_outputs(file.filename, file_bytes)
+        images, zip_bytes, output_filename = build_profile_outputs(file.filename, file_bytes, render_mode)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {
         "sheetNames": [item["sheetName"] for item in images],
+        "renderMode": render_mode,
         "images": images,
         "download": {
-            "filename": PROFILE_OUTPUT_FILENAME,
+            "filename": output_filename,
             "contentBase64": base64.b64encode(zip_bytes).decode("ascii"),
         },
     }
