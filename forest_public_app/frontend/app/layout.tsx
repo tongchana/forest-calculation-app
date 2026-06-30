@@ -1,15 +1,15 @@
 import "./globals.css";
 import type { Metadata } from "next";
-import { Fraunces, Plus_Jakarta_Sans } from "next/font/google";
+import { Inter, Noto_Sans_Thai } from "next/font/google";
 
-const displayFont = Fraunces({
-  variable: "--font-display",
+const bodyFont = Inter({
+  variable: "--font-body",
   subsets: ["latin"],
 });
 
-const bodyFont = Plus_Jakarta_Sans({
-  variable: "--font-body",
-  subsets: ["latin"],
+const thaiFont = Noto_Sans_Thai({
+  variable: "--font-thai",
+  subsets: ["thai", "latin"],
 });
 
 export const metadata: Metadata = {
@@ -20,7 +20,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className={`${displayFont.variable} ${bodyFont.variable}`}>{children}</body>
+      <body className={`${bodyFont.variable} ${thaiFont.variable}`}>{children}</body>
     </html>
   );
 }

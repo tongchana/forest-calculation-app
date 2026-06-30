@@ -13,8 +13,8 @@
 }
 
 @theme inline {
-  --font-display: var(--font-display);
   --font-body: var(--font-body);
+  --font-thai: var(--font-thai);
 }
 
 * {
@@ -30,7 +30,7 @@ body {
   min-height: 100vh;
   background: var(--forest-bg);
   color: var(--forest-text);
-  font-family: var(--font-body), sans-serif;
+  font-family: "Inter", "Noto Sans Thai", "IBM Plex Sans Thai", var(--font-body), var(--font-thai), system-ui, sans-serif;
 }
 
 a {
@@ -49,6 +49,11 @@ select {
   color: #05150f;
 }
 
-.font-display {
-  font-family: var(--font-display), sans-serif;
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  letter-spacing: -0.02em;
 }
