@@ -42,6 +42,7 @@ from forest_economic_report import (
     ECOSYSTEM_TOTAL_KEYS,
     _estimated_tree_count_from_density,
     _sum_ecosystem_detail,
+    _tree_density_per_rai_from_outputs,
     write_forest_economic_report,
 )
 from forest_ecosystem_loss import build_ecosystem_loss_detail_rows
@@ -529,6 +530,9 @@ def build_economic_preview(bundle: dict[str, object], outputs: dict[str, pd.Data
                 "componentId": component_id,
                 "componentName": row.get("component_name"),
                 "componentAreaRai": row.get("component_area_rai"),
+                "treeDensityPerRai": _tree_density_per_rai_from_outputs(outputs, component_id),
+                "saplingDensityPerRai": regen_row.get("sapling_density_per_rai"),
+                "seedlingDensityPerRai": regen_row.get("seedling_density_per_rai"),
                 "estimatedTreeCount": _estimated_tree_count_from_density(outputs, component_id, row.get("component_area_rai")),
                 "estimatedSaplingCount": regen_row.get("sapling_estimated_count"),
                 "estimatedSeedlingCount": regen_row.get("seedling_estimated_count"),

@@ -130,6 +130,9 @@ class ForestPublicAppBackendTests(unittest.TestCase):
         preview = build_economic_preview(bundle, outputs)
         row = preview["componentSummaries"][0]
 
+        self.assertAlmostEqual(row["treeDensityPerRai"], 3.2)
+        self.assertEqual(row["saplingDensityPerRai"], None)
+        self.assertEqual(row["seedlingDensityPerRai"], None)
         self.assertAlmostEqual(row["estimatedTreeCount"], 32)
         self.assertEqual(row["estimatedSaplingCount"], 40)
         self.assertEqual(row["estimatedSeedlingCount"], 100)
