@@ -197,6 +197,47 @@ def _summary_all_lookup(outputs: dict[str, pd.DataFrame]) -> dict[str, dict[str,
     return result
 
 
+def _to_float(value: object) -> float | None:
+    numeric = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+    if pd.isna(numeric):
+        return None
+    return float(numeric)
+
+
+def _estimated_count_from_density(density_per_rai: object, component_area_rai: object) -> float | None:
+    density = _to_float(density_per_rai)
+    area = _to_float(component_area_rai)
+    if density is None or area is None:
+        return None
+    return density * area
+
+
+def _estimated_tree_count_from_density(
+    outputs: dict[str, pd.DataFrame],
+    component_id: str,
+    component_area_rai: object,
+) -> float | None:
+    detail = outputs.get("DETAIL_VOLUME", pd.DataFrame())
+    if detail.empty or "block_type" not in detail.columns:
+        return None
+    tree_rows = detail[
+        (detail["sheet_name"].astype(str) == str(component_id))
+        & (detail["block_type"].astype(str).str.lower() == "tree")
+    ].copy()
+    if tree_rows.empty:
+        return None
+    plot_count = tree_rows["Plot"].astype(str).str.strip().replace("", pd.NA).dropna().nunique()
+    plot_area_ha = _to_float(outputs.get("__meta__", {}).get("plot_area_ha", 0.0))
+    rai_per_hectare = _to_float(outputs.get("__meta__", {}).get("rai_per_hectare", 0.0))
+    component_area = _to_float(component_area_rai)
+    if not plot_count or plot_area_ha is None or rai_per_hectare is None or component_area is None:
+        return None
+    sampled_area_rai = plot_count * plot_area_ha * rai_per_hectare
+    if sampled_area_rai <= 0:
+        return None
+    return (len(tree_rows.index) / sampled_area_rai) * component_area
+
+
 def _warning_rows(bundle: dict[str, object]) -> list[dict[str, object]]:
     warning_rows: list[dict[str, object]] = []
     for module_name in ["forest_economics", "wood_future_value", "regeneration_loss", "ecosystem_loss"]:
@@ -224,18 +265,39 @@ def _build_master_rows(outputs: dict[str, pd.DataFrame], bundle: dict[str, objec
             values[component_id] = field_getter(component_id)
         return values
 
+    def component_area(component_id: str) -> object:
+        return component_summaries.get(component_id, {}).get("component_area_rai")
+
+    def estimated_tree_count(component_id: str) -> float | None:
+        estimated = _estimated_tree_count_from_density(outputs, component_id, component_area(component_id))
+        if estimated is not None:
+            return estimated
+        return _to_float(summary_all.get(component_id, {}).get("n_tree"))
+
+    def estimated_sapling_count(component_id: str) -> float | None:
+        estimated = regeneration.get(component_id, {}).get("sapling_estimated_count")
+        if estimated is not None:
+            return _to_float(estimated)
+        return _estimated_count_from_density(summary_all.get(component_id, {}).get("sapling_per_rai"), component_area(component_id))
+
+    def estimated_seedling_count(component_id: str) -> float | None:
+        estimated = regeneration.get(component_id, {}).get("seedling_estimated_count")
+        if estimated is not None:
+            return _to_float(estimated)
+        return _estimated_count_from_density(summary_all.get(component_id, {}).get("seedling_per_rai"), component_area(component_id))
+
     return [
         ("พื้นที่โครงการ", "", None),
-        ("ไร่", "", collect(lambda component_id: component_summaries.get(component_id, {}).get("component_area_rai"))),
+        ("ไร่", "", collect(component_area)),
         ("การสูญเสียต้นไม้", "", None),
-        ("ไม้ใหญ่ยืนต้น (ต้น)", "", collect(lambda component_id: summary_all.get(component_id, {}).get("n_tree"))),
-        ("ลูกไม้ (ต้น)", "", collect(lambda component_id: summary_all.get(component_id, {}).get("n_sapling"))),
-        ("กล้าไม้ (ต้น)", "", collect(lambda component_id: summary_all.get(component_id, {}).get("total_seedling_number"))),
+        ("ไม้ใหญ่ยืนต้น (ต้น)", "", collect(estimated_tree_count)),
+        ("ลูกไม้ (ต้น)", "", collect(estimated_sapling_count)),
+        ("กล้าไม้ (ต้น)", "", collect(estimated_seedling_count)),
         ("การสูญเสียมูลค่าทางนิเวศวิทยา (ทางตรง)", "", None),
         ("การสูญเสียเนื้อไม้ (ลูกบาศก์เมตร)", "", collect(lambda component_id: component_summaries.get(component_id, {}).get("total_wood_loss_m3"))),
         ("การสูญเสียเนื้อไม้ (บาท)", "", collect(lambda component_id: component_summaries.get(component_id, {}).get("total_wood_value_baht"))),
-        ("การสูญเสียมูลค่าไม้หนุ่ม (บาท)", "27 บาท/ต้น/ไร่", collect(lambda component_id: regeneration.get(component_id, {}).get("sapling_loss_baht"))),
-        ("การสูญเสียมูลค่ากล้าไม้ (บาท)", "6 บาท/ต้น/ไร่", collect(lambda component_id: regeneration.get(component_id, {}).get("seedling_loss_baht"))),
+        ("การสูญเสียมูลค่าไม้หนุ่ม (บาท)", "27 บาท/ต้น", collect(lambda component_id: regeneration.get(component_id, {}).get("sapling_loss_baht"))),
+        ("การสูญเสียมูลค่ากล้าไม้ (บาท)", "6 บาท/ต้น", collect(lambda component_id: regeneration.get(component_id, {}).get("seedling_loss_baht"))),
         ("การประเมินมูลค่าการสูญเสียทางระบบนิเวศ", "", None),
         ("การสูญเสียดินอันเนื่องมาจากการกัดชะพังทลาย", "1,800 บาท/เที่ยว", collect(lambda component_id: _sum_ecosystem_detail(bundle, component_id, "soil"))),
         ("การสูญเสียธาตุไนโตรเจน", "0.035 บาท/กรัม", collect(lambda component_id: _sum_ecosystem_detail(bundle, component_id, "nitrogen"))),
@@ -546,6 +608,7 @@ def _write_component_sheet(ws, outputs: dict[str, pd.DataFrame], bundle: dict[st
     ecosystem_rows = _weighted_component_ecosystem_details(bundle, component_id)
     tq_columns = _sort_tq_values(detail_frame["tq"].tolist()) if not detail_frame.empty else []
     component_area_rai = summary_dict.get("component_area_rai")
+    estimated_tree_count = _estimated_tree_count_from_density(outputs, component_id, component_area_rai)
 
     ws.merge_cells("A1:H1")
     ws["A1"] = f"รายงานองค์ประกอบ: {component_name}"
@@ -560,7 +623,7 @@ def _write_component_sheet(ws, outputs: dict[str, pd.DataFrame], bundle: dict[st
         ["พื้นที่โครงการ", component_area_rai, "ไร่"],
         ["ประเภทป่าที่พบ", ", ".join(str(item) for item in summary_dict.get("forest_types_detected", [])), ""],
         ["ชั้นคุณภาพไม้ที่พบ", ", ".join(str(item) for item in summary_dict.get("tq_detected", [])), ""],
-        ["ไม้ใหญ่ยืนต้น", next((row.get("n_tree") for _, row in outputs.get("SUMMARY_ALL", pd.DataFrame())[outputs.get("SUMMARY_ALL", pd.DataFrame())["sheet_name"] == component_id].iterrows()), None) if not outputs.get("SUMMARY_ALL", pd.DataFrame()).empty else None, "ต้น"],
+        ["ไม้ใหญ่ยืนต้น", estimated_tree_count, "ต้น"],
         ["ลูกไม้", regeneration_dict.get("sapling_density_per_rai"), "ต้น/ไร่"],
         ["กล้าไม้", regeneration_dict.get("seedling_density_per_rai"), "ต้น/ไร่"],
     ]
@@ -600,8 +663,8 @@ def _write_component_sheet(ws, outputs: dict[str, pd.DataFrame], bundle: dict[st
 
     regeneration_headers = ["รายการ", "ความหนาแน่น", "หน่วย", "อัตรา", "มูลค่า (บาท)"]
     regeneration_rows = [
-        ["ลูกไม้", regeneration_dict.get("sapling_density_per_rai"), "ต้น/ไร่", "27 บาท/ต้น/ไร่", regeneration_dict.get("sapling_loss_baht")],
-        ["กล้าไม้", regeneration_dict.get("seedling_density_per_rai"), "ต้น/ไร่", "6 บาท/ต้น/ไร่", regeneration_dict.get("seedling_loss_baht")],
+        ["ลูกไม้", regeneration_dict.get("sapling_density_per_rai"), "ต้น/ไร่", "27 บาท/ต้น", regeneration_dict.get("sapling_loss_baht")],
+        ["กล้าไม้", regeneration_dict.get("seedling_density_per_rai"), "ต้น/ไร่", "6 บาท/ต้น", regeneration_dict.get("seedling_loss_baht")],
         ["รวม", None, "", "", regeneration_dict.get("total_regeneration_loss_baht")],
     ]
     current_row = _write_component_table(ws, current_row, "ความเสียหายลูกไม้และกล้าไม้", regeneration_headers, regeneration_rows, total_fill=TOTAL_FILL)

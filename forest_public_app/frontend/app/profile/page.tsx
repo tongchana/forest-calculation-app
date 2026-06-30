@@ -36,15 +36,15 @@ type ProfileSheetValidation = {
   species: string[];
 };
 
+type RenderMode = "graphic" | "realistic";
+
 type ProfileResponse = {
   sheetNames: string[];
-  renderMode: "graphic" | "realistic";
+  renderMode: RenderMode;
   images: ProfileImage[];
   validation: ProfileSheetValidation[];
   download: DownloadPayload;
 };
-
-type RenderMode = "graphic" | "realistic";
 
 const requiredColumns = ["Species", "Height", "Position", "Crown cover"];
 const profileSectionIds = [
@@ -421,10 +421,10 @@ export default function ProfilePage() {
 
             <SectionCard
               dark
+              description="Rendering uses the existing profile API and stays focused on canopy profile diagrams only."
               eyebrow="Step 4"
               id="generate-profile-diagrams"
-              title="Create profile diagrams"
-              description="Choose a visual style, then generate one profile diagram for every worksheet in your workbook."
+              title="Generate profile diagrams"
             >
               <div className="mb-5 grid gap-3 md:grid-cols-2">
                 <button
@@ -464,8 +464,8 @@ export default function ProfilePage() {
               >
                 {busy ? "Creating profile diagrams..." : `Create ${renderMode === "graphic" ? "data graphic" : "illustrated forest"} diagrams`}
               </button>
-              {!canRender && <Notice tone="warning">Upload a valid profile workbook and wait for inspection before creating diagrams.</Notice>}
-              {result && <Notice tone="success">Profile diagrams are ready. Review the previews below or download the ZIP package.</Notice>}
+              {!canRender && <Notice tone="warning">Upload a valid profile workbook and wait for inspection before rendering diagrams.</Notice>}
+              {result && <Notice tone="success">Profile diagrams generated successfully. Review them below or download the ZIP package.</Notice>}
             </SectionCard>
 
             <SectionCard

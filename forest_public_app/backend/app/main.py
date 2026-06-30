@@ -29,16 +29,21 @@ from pydantic import BaseModel
 ROOT_DIR = Path(__file__).resolve().parents[3]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
+WORKSPACE_DIR = ROOT_DIR if (ROOT_DIR / "cal_EIA").exists() else ROOT_DIR.parent
 
 import run_forest_calculation as calc
-from cal_EIA.generate_profile_realistic import render_freeform_sprite_experiment
-from cal_EIA.profile_diagram_lib import (
-    audit_profile_sheet,
-    create_profile_template,
-    list_profile_sheets,
-    render_workbook_profile_map,
+PROFILE_SCRIPT_DIR = WORKSPACE_DIR / "cal_EIA" / "05_profile_scripts"
+if not PROFILE_SCRIPT_DIR.exists():
+    PROFILE_SCRIPT_DIR = WORKSPACE_DIR / "cal_EIA"
+if str(PROFILE_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROFILE_SCRIPT_DIR))
+from profile_diagram_lib import create_profile_template, render_workbook_profile_map
+from forest_economic_report import (
+    ECOSYSTEM_TOTAL_KEYS,
+    _estimated_tree_count_from_density,
+    _sum_ecosystem_detail,
+    write_forest_economic_report,
 )
-from forest_economic_report import ECOSYSTEM_TOTAL_KEYS, _sum_ecosystem_detail, write_forest_economic_report
 from forest_ecosystem_loss import build_ecosystem_loss_detail_rows
 from forest_integration import EcosystemUserInput, calculate_forest_valuation_bundle_from_outputs
 
@@ -52,7 +57,6 @@ SUMMARY_OUTPUT_FILENAME = "forest_calculation_output_summary_by_site.xlsx"
 DETAIL_OUTPUT_FILENAME = "forest_calculation_output_details.xlsx"
 COMPONENT_OUTPUT_FILENAME = "forest_component_summary.xlsx"
 PROFILE_OUTPUT_FILENAME = "profile_diagram_outputs.zip"
-PROFILE_REALISTIC_OUTPUT_FILENAME = "profile_diagram_realistic_outputs.zip"
 ECONOMIC_OUTPUT_FILENAME = "forest_economic_report.xlsx"
 ECONOMIC_JSON_FILENAME = "forest_economic_report.json"
 WORKFLOW_CACHE_TTL_SECONDS = int(os.getenv("WORKFLOW_CACHE_TTL_SECONDS", "3600"))
@@ -492,7 +496,7 @@ def build_component_biomass_summary(
     return rows
 
 
-def build_economic_preview(bundle: dict[str, object]) -> dict[str, Any]:
+def build_economic_preview(bundle: dict[str, object], outputs: dict[str, pd.DataFrame]) -> dict[str, Any]:
     component_rows: list[dict[str, Any]] = []
     ecosystem_component_lookup = {
         normalize_text(row.get("component_id")): row
@@ -525,6 +529,9 @@ def build_economic_preview(bundle: dict[str, object]) -> dict[str, Any]:
                 "componentId": component_id,
                 "componentName": row.get("component_name"),
                 "componentAreaRai": row.get("component_area_rai"),
+                "estimatedTreeCount": _estimated_tree_count_from_density(outputs, component_id, row.get("component_area_rai")),
+                "estimatedSaplingCount": regen_row.get("sapling_estimated_count"),
+                "estimatedSeedlingCount": regen_row.get("seedling_estimated_count"),
                 "forestTypes": row.get("forest_types_detected", []),
                 "tqs": row.get("tq_detected", []),
                 "totalWoodLossM3": row.get("total_wood_loss_m3"),
@@ -572,7 +579,7 @@ def build_economic_preview(bundle: dict[str, object]) -> dict[str, Any]:
                 ),
                 2,
             ),
-            help_text="Matches the MASTER_SUMMARY total row in the economic report",
+            help_text="Matches the MASTER_SUMMARY total row after scaling survey density and TQ volume per rai to project area",
         ),
         MetricCard(
             label="Ecosystem loss / year",
@@ -799,7 +806,7 @@ async def calculate(
                 future_interest_rate=future_interest_rate,
                 future_periods_years=parsed_future_periods,
             )
-            economic_payload = build_economic_preview(bundle)
+            economic_payload = build_economic_preview(bundle, result_sheets)
             with tempfile.TemporaryDirectory() as tmp_dir:
                 temp_dir = Path(tmp_dir)
                 report_path = temp_dir / ECONOMIC_OUTPUT_FILENAME

@@ -340,14 +340,23 @@ def calculate_regeneration_loss_from_outputs(
         seedling_per_rai = pd.to_numeric(pd.Series([row.get("seedling_per_rai")]), errors="coerce").iloc[0]
         sapling_density = 0.0 if pd.isna(sapling_per_rai) else float(sapling_per_rai)
         seedling_density = 0.0 if pd.isna(seedling_per_rai) else float(seedling_per_rai)
-        sapling_loss = sapling_density * SAPLING_PRICE_BAHT_PER_TREE
-        seedling_loss = seedling_density * SEEDLING_PRICE_BAHT_PER_TREE
+        component_area = component_area_lookup.get(component_key)
+        if component_area is None:
+            warnings.append(f"{display_name}: missing component_area_rai input for regeneration loss")
+            continue
+        sapling_estimated_count = sapling_density * float(component_area)
+        seedling_estimated_count = seedling_density * float(component_area)
+        sapling_loss = sapling_estimated_count * SAPLING_PRICE_BAHT_PER_TREE
+        seedling_loss = seedling_estimated_count * SEEDLING_PRICE_BAHT_PER_TREE
         component_summaries.append(
             {
                 "component_id": component_key,
                 "component_name": display_name,
+                "component_area_rai": float(component_area),
                 "sapling_density_per_rai": sapling_density,
                 "seedling_density_per_rai": seedling_density,
+                "sapling_estimated_count": sapling_estimated_count,
+                "seedling_estimated_count": seedling_estimated_count,
                 "sapling_price_baht_per_tree": SAPLING_PRICE_BAHT_PER_TREE,
                 "seedling_price_baht_per_tree": SEEDLING_PRICE_BAHT_PER_TREE,
                 "sapling_loss_baht": sapling_loss,

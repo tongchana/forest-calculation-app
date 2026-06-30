@@ -277,9 +277,10 @@ def calculate_forest_economics(
                 has_calculated_species = False
 
                 for species_name, species_volume in sorted(species_map.items()):
-                    species_volume_per_rai = species_volume / forest_plot_area
-                    species_wood_loss = allocated_component_area * species_volume_per_rai
-                    species_increment = species_wood_loss * increment_rate
+                    species_volume_share = species_volume / total_volume
+                    species_volume_per_rai = volume_per_rai * species_volume_share
+                    species_wood_loss = tq_wood_loss * species_volume_share
+                    species_increment = tq_increment * species_volume_share
                     price = price_lookup(
                         {
                             "component_name": component.component_name,
