@@ -8,12 +8,14 @@ from pandas import Timestamp
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
+WEB_APPS_DIR = ROOT_DIR / "web_apps"
+if str(WEB_APPS_DIR) not in sys.path:
+    sys.path.insert(0, str(WEB_APPS_DIR))
 
 from forest_public_app.backend.app.main import (
     WORKFLOW_CACHE,
     build_biomass_payload,
+    build_economic_preview,
     build_metrics,
     build_workflow_cache_key,
     get_cached_workflow,
@@ -79,6 +81,58 @@ class ForestPublicAppBackendTests(unittest.TestCase):
         sanitized = sanitize_for_json(value)
 
         self.assertEqual(sanitized, {"count": 5, "nested": [1.5, {"value": 2}]})
+
+    def test_build_economic_preview_includes_area_scaled_tree_counts(self):
+        outputs = {
+            "DETAIL_VOLUME": pd.DataFrame(
+                [
+                    {"sheet_name": "comp_internal", "block_type": "Tree", "Plot": "P1"},
+                    {"sheet_name": "comp_internal", "block_type": "Tree", "Plot": "P1"},
+                ]
+            ),
+            "__meta__": {"plot_area_ha": 0.1, "rai_per_hectare": 6.25},
+        }
+        bundle = {
+            "forest_economics": {
+                "componentSummaries": [
+                    {
+                        "component_id": "comp_internal",
+                        "component_name": "Component A",
+                        "component_area_rai": 10,
+                        "forest_types_detected": [],
+                        "tq_detected": [],
+                        "total_wood_loss_m3": 0,
+                        "total_annual_increment_m3_per_year": 0,
+                        "total_annual_wood_value_baht": 0,
+                        "total_wood_value_baht": 0,
+                        "warnings": [],
+                    }
+                ],
+                "grandTotal": {"total_wood_loss_m3": 0},
+            },
+            "regeneration_loss": {
+                "componentSummaries": [
+                    {
+                        "component_id": "comp_internal",
+                        "sapling_estimated_count": 40,
+                        "seedling_estimated_count": 100,
+                        "sapling_loss_baht": 1080,
+                        "seedling_loss_baht": 600,
+                        "total_regeneration_loss_baht": 1680,
+                    }
+                ]
+            },
+            "ecosystem_loss": {"componentSummaries": [], "groupResults": []},
+            "wood_future_value": {"periodRows": [], "componentSummaries": [], "warnings": []},
+            "warnings": [],
+        }
+
+        preview = build_economic_preview(bundle, outputs)
+        row = preview["componentSummaries"][0]
+
+        self.assertAlmostEqual(row["estimatedTreeCount"], 32)
+        self.assertEqual(row["estimatedSaplingCount"], 40)
+        self.assertEqual(row["estimatedSeedlingCount"], 100)
 
     def test_workflow_cache_returns_copied_dataframes(self):
         WORKFLOW_CACHE.clear()

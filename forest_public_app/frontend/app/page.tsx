@@ -50,6 +50,9 @@ type EconomicComponentSummary = {
   componentId: string;
   componentName: string;
   componentAreaRai: number | null;
+  estimatedTreeCount: number | null;
+  estimatedSaplingCount: number | null;
+  estimatedSeedlingCount: number | null;
   forestTypes: string[];
   tqs: string[];
   totalWoodLossM3: number | null;
@@ -1100,7 +1103,7 @@ export default function Page() {
                             <h3 className="mt-2 text-2xl font-semibold text-[#1F2933]">Report-aligned valuation</h3>
                           </div>
                           <p className="max-w-xl text-sm leading-6 text-[#667085]">
-                            Total loss in report matches the MASTER_SUMMARY total row: wood value loss + regeneration loss + ecosystem loss rows.
+                            Report totals scale survey density and TQ volume per rai to the project area, then price wood loss by species.
                           </p>
                         </div>
                         <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -1113,11 +1116,14 @@ export default function Page() {
                       {economicRows.length > 0 && (
                         <div className="overflow-hidden rounded-[28px] border border-[#DDE5D5]">
                           <div className="overflow-x-auto">
-                            <table className="w-full min-w-[1250px] text-left text-sm">
+                            <table className="w-full min-w-[1480px] text-left text-sm">
                               <thead className="bg-[#F6F8F4] text-xs uppercase tracking-[0.18em] text-[#667085]">
                                 <tr>
                                   <th className="px-4 py-4">Component</th>
                                   <th className="px-4 py-4">Area (rai)</th>
+                                  <th className="px-4 py-4">Trees est.</th>
+                                  <th className="px-4 py-4">Saplings est.</th>
+                                  <th className="px-4 py-4">Seedlings est.</th>
                                   <th className="px-4 py-4">Forest types</th>
                                   <th className="px-4 py-4">TQs</th>
                                   <th className="px-4 py-4">Wood loss</th>
@@ -1134,6 +1140,9 @@ export default function Page() {
                                   <tr key={row.componentId} className="transition hover:bg-[#F8FBF3]">
                                     <td className="px-4 py-4 font-semibold text-[#1F2933]">{row.componentName}</td>
                                     <td className="px-4 py-4">{formatMetricValue(row.componentAreaRai, 2)}</td>
+                                    <td className="px-4 py-4">{formatMetricValue(row.estimatedTreeCount, 0)}</td>
+                                    <td className="px-4 py-4">{formatMetricValue(row.estimatedSaplingCount, 0)}</td>
+                                    <td className="px-4 py-4">{formatMetricValue(row.estimatedSeedlingCount, 0)}</td>
                                     <td className="px-4 py-4 text-[#667085]">{row.forestTypes.join(", ") || "-"}</td>
                                     <td className="px-4 py-4 text-[#667085]">{row.tqs.join(", ") || "-"}</td>
                                     <td className="px-4 py-4">{formatMetricValue(row.totalWoodLossM3, 3)}</td>
