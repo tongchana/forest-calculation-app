@@ -505,6 +505,9 @@ def draw_tree(
     crown_display_height = float(np.clip(crown_depth * crown_height_scale * 0.92, crown_depth * 0.9, crown_depth * 1.24))
 
     trunk_display_height = max(trunk_top_y, 0.45)
+    # Keep emergent-tree trunks legible through the lower canopy. Without this,
+    # their measured height can look truncated when shorter crowns overlap them.
+    trunk_zorder = 3.18 if trunk_display_height >= 15.0 else 2.15
     trunk_display_width = float(
         np.clip(
             trunk_display_height * trunk_asset.aspect_ratio * 1.16,
@@ -537,7 +540,7 @@ def draw_tree(
         bottom_y=0.0,
         width=warped_trunk_display_width,
         height=trunk_display_height,
-        zorder=2.15,
+        zorder=trunk_zorder,
         alpha_scale=0.98,
     )
 
@@ -654,7 +657,9 @@ def render_freeform_sprite_experiment(excel_path: Path, sheet_name: str, output_
     top_ax.set_xlabel("\u0e23\u0e30\u0e22\u0e30\u0e17\u0e32\u0e07 (\u0e40\u0e21\u0e15\u0e23)", fontproperties=thai_axis_font)
     top_ax.set_ylabel("\u0e23\u0e30\u0e22\u0e30\u0e17\u0e32\u0e07 (\u0e40\u0e21\u0e15\u0e23)", fontproperties=thai_axis_font)
 
-    for row in draw_df.sort_values(["crown_width", "height_m"], ascending=[False, False]).itertuples():
+    # Draw shorter trees first so trunks of emergent trees remain visible instead
+    # of being hidden behind the crowns of lower neighbouring trees.
+    for row in draw_df.sort_values(["height_m", "crown_width"], ascending=[True, False]).itertuples():
         draw_tree(profile_ax, row, species_style_map=species_style_map)
 
     profile_left, profile_right = compute_profile_limits(draw_df)
