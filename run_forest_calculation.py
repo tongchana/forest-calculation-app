@@ -1116,9 +1116,7 @@ def build_dbh_class_summary(
         if frame.empty:
             return
 
-        # Use girth-based size classes for this summary table. Keep the existing
-        # output labels so downstream exports and templates continue to work.
-        girth = pd.to_numeric(frame["Girth_cm"], errors="coerce")
+        dbh = pd.to_numeric(frame["DBH_cm"], errors="coerce")
         n_plots = frame["Plot"].astype(str).str.strip().replace("", np.nan).dropna().nunique()
         total_area_ha = n_plots * plot_area_ha
         total_area_rai = total_area_ha * rai_per_hectare if pd.notna(total_area_ha) else np.nan
@@ -1129,9 +1127,9 @@ def build_dbh_class_summary(
         )
 
         class_specs = [
-            ("dbh 10-30", (girth >= 10) & (girth < 30)),
-            ("dbh 30-60", (girth >= 30) & (girth <= 60)),
-            ("dbh > 60", girth > 60),
+            ("dbh < 30", (dbh > 0) & (dbh < 30)),
+            ("dbh 30-60", (dbh >= 30) & (dbh <= 60)),
+            ("dbh > 60", dbh > 60),
         ]
 
         total_count = 0.0
@@ -2001,7 +1999,7 @@ def write_component_summary_workbook(
 
         worksheet.cell(density_row, 1).value = display_name
         worksheet.cell(density_row, 2).value = species_count_from_tree(component_name)
-        worksheet.cell(density_row, 3).value = density_map.get(("tree", "dbh 10-30"))
+        worksheet.cell(density_row, 3).value = density_map.get(("tree", "dbh < 30"))
         worksheet.cell(density_row, 4).value = density_map.get(("tree", "dbh 30-60"))
         worksheet.cell(density_row, 5).value = density_map.get(("tree", "dbh > 60"))
         worksheet.cell(density_row, 6).value = density_map.get(("tree", "total"))
