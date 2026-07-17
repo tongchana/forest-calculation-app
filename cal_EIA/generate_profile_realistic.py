@@ -487,7 +487,9 @@ def draw_tree(
     crown_width = float(row.crown_width)
     crown_depth = float(row.crown_depth)
     crown_base_y = float(max(row.height_m - crown_depth, 0.0))
-    trunk_top_y = float(min(crown_base_y + crown_depth * TRUNK_CROWN_OVERLAP_RATIO, 19.6))
+    # The trunk must reach its own crown base. Capping it at a fixed height
+    # disconnects tall trees from their crowns and makes them appear to float.
+    trunk_top_y = float(crown_base_y + crown_depth * TRUNK_CROWN_OVERLAP_RATIO)
     crown_center_x = float(row.x + (row.crown_x_plus - row.crown_x_minus) / 2)
     crown_center_y = float(crown_base_y + crown_depth / 2)
 
