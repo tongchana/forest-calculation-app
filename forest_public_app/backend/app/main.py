@@ -32,12 +32,18 @@ if str(ROOT_DIR) not in sys.path:
 WORKSPACE_DIR = ROOT_DIR if (ROOT_DIR / "cal_EIA").exists() else ROOT_DIR.parent
 
 import run_forest_calculation as calc
+from cal_EIA.generate_profile_realistic import render_freeform_sprite_experiment
 PROFILE_SCRIPT_DIR = WORKSPACE_DIR / "cal_EIA" / "05_profile_scripts"
 if not PROFILE_SCRIPT_DIR.exists():
     PROFILE_SCRIPT_DIR = WORKSPACE_DIR / "cal_EIA"
 if str(PROFILE_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(PROFILE_SCRIPT_DIR))
-from profile_diagram_lib import create_profile_template, render_workbook_profile_map
+from profile_diagram_lib import (
+    audit_profile_sheet,
+    create_profile_template,
+    list_profile_sheets,
+    render_workbook_profile_map,
+)
 from forest_economic_report import (
     ECOSYSTEM_TOTAL_KEYS,
     _estimated_tree_count_from_density,
@@ -57,6 +63,7 @@ SUMMARY_OUTPUT_FILENAME = "forest_calculation_output_summary_by_site.xlsx"
 DETAIL_OUTPUT_FILENAME = "forest_calculation_output_details.xlsx"
 COMPONENT_OUTPUT_FILENAME = "forest_component_summary.xlsx"
 PROFILE_OUTPUT_FILENAME = "profile_diagram_outputs.zip"
+PROFILE_REALISTIC_OUTPUT_FILENAME = "profile_diagram_realistic_outputs.zip"
 ECONOMIC_OUTPUT_FILENAME = "forest_economic_report.xlsx"
 ECONOMIC_JSON_FILENAME = "forest_economic_report.json"
 WORKFLOW_CACHE_TTL_SECONDS = int(os.getenv("WORKFLOW_CACHE_TTL_SECONDS", "3600"))
