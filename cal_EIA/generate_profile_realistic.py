@@ -643,8 +643,8 @@ def render_freeform_sprite_experiment(excel_path: Path, sheet_name: str, output_
         branch_assets=branch_assets,
     )
 
-    figure = plt.figure(figsize=(14.5, 13.2))
-    grid = figure.add_gridspec(nrows=3, ncols=1, height_ratios=[1.0, 1.08, 0.4])
+    figure = plt.figure(figsize=(14.5, 14.5))
+    grid = figure.add_gridspec(nrows=3, ncols=1, height_ratios=[1.0, 1.08, 0.72])
     top_ax = figure.add_subplot(grid[0])
     profile_ax = figure.add_subplot(grid[1])
     legend_ax = figure.add_subplot(grid[2])
@@ -722,25 +722,26 @@ def render_freeform_sprite_experiment(excel_path: Path, sheet_name: str, output_
     axis_span = max(x_right - x_left, 1.0)
     legend_left = max((0 - x_left) / axis_span, 0.0)
     legend_width = min(40 / axis_span, 1.0 - legend_left)
-    legend_font = get_thai_font_properties(size=9.5)
+    legend_columns = 3 if len(handles) > 8 else min(5, len(handles))
+    legend_font = get_thai_font_properties(size=8.5)
     legend_title_font = get_thai_font_properties(size=10.5, weight="bold")
     legend_ax.legend(
         handles=handles,
         title="ชนิดพันธุ์ไม้",
         loc="center",
         mode="expand",
-        ncol=5,
+        ncol=legend_columns,
         frameon=True,
         fancybox=True,
         framealpha=0.96,
         edgecolor="#d6d6d6",
         prop=legend_font,
         title_fontproperties=legend_title_font,
-        columnspacing=1.0,
-        handletextpad=0.5,
-        borderpad=0.9,
-        labelspacing=0.8,
-        bbox_to_anchor=(legend_left, 0.08, legend_width, 0.84),
+        columnspacing=0.8,
+        handletextpad=0.45,
+        borderpad=0.8,
+        labelspacing=0.7,
+        bbox_to_anchor=(legend_left, 0.04, legend_width, 0.92),
     )
 
     figure.subplots_adjust(left=0.09, right=0.91, top=0.96, bottom=0.06, hspace=0.34)
