@@ -205,22 +205,28 @@ def build_species_label_map(draw_df) -> dict[str, str]:
     return labels
 
 
-def layout_profile_labels(ordered_df, cluster_gap_m: float = 0.75) -> dict[int, tuple[float, int]]:
-    """Use two rows and small local offsets to keep labels legible in dense x clusters."""
-    groups: list[list[object]] = []
-    for row in ordered_df.itertuples():
-        if not groups or float(row.x) - float(groups[-1][-1].x) > cluster_gap_m:
-            groups.append([row])
-        else:
-            groups[-1].append(row)
-
+def layout_profile_labels(ordered_df, min_horizontal_gap_m: float = 0.9) -> dict[int, tuple[float, int]]:
+    """Pack tree labels into non-overlapping rows without changing tree positions."""
     layout: dict[int, tuple[float, int]] = {}
-    for group in groups:
-        count = len(group)
-        # The offsets only move the annotation, never the tree or its measured x position.
-        offsets = np.linspace(-0.34 * (count - 1) / 2, 0.34 * (count - 1) / 2, count)
-        for position, (row, offset) in enumerate(zip(group, offsets)):
-            layout[int(row.index)] = (float(row.x) + float(offset), position % 2)
+    last_x_by_row: list[float] = []
+
+    for row in ordered_df.itertuples():
+        x_position = float(row.x)
+        row_index = next(
+            (
+                index
+                for index, previous_x in enumerate(last_x_by_row)
+                if x_position - previous_x >= min_horizontal_gap_m
+            ),
+            None,
+        )
+        if row_index is None:
+            row_index = len(last_x_by_row)
+            last_x_by_row.append(x_position)
+        else:
+            last_x_by_row[row_index] = x_position
+        layout[int(row.index)] = (x_position, row_index)
+
     return layout
 
 
@@ -625,6 +631,7 @@ def render_freeform_sprite_experiment(excel_path: Path, sheet_name: str, output_
         for _, row in ordered_for_labels.iterrows()
     }
     label_layout_map = layout_profile_labels(ordered_for_labels)
+    label_row_count = max((row_index for _, row_index in label_layout_map.values()), default=0) + 1
     draw_df["tree_label"] = draw_df.index.map(label_map)
 
     crown_assets, trunk_assets = load_assets()
@@ -670,7 +677,7 @@ def render_freeform_sprite_experiment(excel_path: Path, sheet_name: str, output_
     profile_ax.set_xlabel(
         "\u0e23\u0e30\u0e22\u0e30\u0e17\u0e32\u0e07 (\u0e40\u0e21\u0e15\u0e23)",
         fontproperties=thai_axis_font,
-        labelpad=34,
+        labelpad=34 + (12 * max(label_row_count - 2, 0)),
     )
     profile_ax.set_ylabel("\u0e04\u0e27\u0e32\u0e21\u0e2a\u0e39\u0e07 (\u0e40\u0e21\u0e15\u0e23)", fontproperties=thai_axis_font)
     profile_ax.set_axisbelow(True)
@@ -736,7 +743,7 @@ def render_freeform_sprite_experiment(excel_path: Path, sheet_name: str, output_
         bbox_to_anchor=(legend_left, 0.08, legend_width, 0.84),
     )
 
-    figure.subplots_adjust(left=0.09, right=0.91, top=0.96, bottom=0.06, hspace=0.2)
+    figure.subplots_adjust(left=0.09, right=0.91, top=0.96, bottom=0.06, hspace=0.34)
     # Match the profile panel's visible y-axis/title alignment to the equal-aspect
     # top view without changing any tree coordinates or profile scale.
     figure.canvas.draw()
