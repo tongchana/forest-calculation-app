@@ -821,7 +821,7 @@ def render_freeform_sprite_experiment(excel_path: Path, sheet_name: str, output_
     legend_ax.set_position([0.09, 0.06, 0.82, 0.15])
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{excel_path.stem}_{sheet_name.replace(' ', '_')}_freeform_sprite_experiment.png"
-    figure.savefig(output_path, dpi=220, facecolor="white")
+    figure.savefig(output_path, dpi=300, facecolor="white")
     plt.close(figure)
     return output_path
 
