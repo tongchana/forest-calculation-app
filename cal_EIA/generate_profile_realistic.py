@@ -13,10 +13,8 @@ from PIL import Image
 from cal_EIA.profile_diagram_lib import (
     PROFILE_CROWN_HEIGHT_SCALE,
     PROFILE_CROWN_WIDTH_SCALE,
-    SIDE_PADDING_METERS,
     TRUNK_CROWN_OVERLAP_RATIO,
     build_species_color_map,
-    compute_profile_limits,
     configure_matplotlib,
     draw_top_view,
     get_thai_font_properties,
@@ -205,29 +203,85 @@ def build_species_label_map(draw_df) -> dict[str, str]:
     return labels
 
 
-def layout_profile_labels(ordered_df, min_horizontal_gap_m: float = 0.9) -> dict[int, tuple[float, int]]:
+def layout_profile_labels(ordered_df, min_horizontal_gap_m: float = 1.6) -> dict[int, tuple[float, int]]:
     """Pack tree labels into non-overlapping rows without changing tree positions."""
     layout: dict[int, tuple[float, int]] = {}
-    last_x_by_row: list[float] = []
+    # Keep an approximate text width as well as position; two anchors can be
+    # far enough apart while their multi-species labels still touch.
+    last_item_by_row: list[tuple[float, float]] = []
 
     for row in ordered_df.itertuples():
         x_position = float(row.x)
+        label_half_width_m = max(0.45, 0.18 * len(str(row.label)) + 0.22)
         row_index = next(
             (
                 index
-                for index, previous_x in enumerate(last_x_by_row)
-                if x_position - previous_x >= min_horizontal_gap_m
+                for index, (previous_x, previous_half_width_m) in enumerate(last_item_by_row)
+                if x_position - previous_x >= max(
+                    min_horizontal_gap_m,
+                    previous_half_width_m + label_half_width_m + 0.20,
+                )
             ),
             None,
         )
         if row_index is None:
-            row_index = len(last_x_by_row)
-            last_x_by_row.append(x_position)
+            row_index = len(last_item_by_row)
+            last_item_by_row.append((x_position, label_half_width_m))
         else:
-            last_x_by_row[row_index] = x_position
+            last_item_by_row[row_index] = (x_position, label_half_width_m)
         layout[int(row.index)] = (x_position, row_index)
 
     return layout
+
+
+def build_profile_label_annotations(
+    ordered_df,
+    label_map: dict[int, str],
+    projected_cluster_width_m: float = 1.6,
+):
+    """Summarise labels by the visible X-projection, not hidden Y positions.
+
+    A profile is a side view: trees at different Y coordinates can occupy the
+    same visual column.  Group close X positions into one compact annotation so
+    the label count reflects what can actually be distinguished in the view.
+    """
+    annotation_rows: list[dict[str, object]] = []
+    ordered_by_x = ordered_df.sort_values(["x", "height_m"], ascending=[True, False])
+    cluster_start_x: float | None = None
+    clusters: list[list[object]] = []
+
+    for row in ordered_by_x.itertuples():
+        x_position = float(row.x)
+        if cluster_start_x is None or x_position - cluster_start_x >= projected_cluster_width_m:
+            clusters.append([])
+            cluster_start_x = x_position
+        clusters[-1].append(row)
+
+    for rows in clusters:
+        representative = rows[0]
+        labels_in_position = [label_map[int(row.index)] for row in rows]
+        cluster_x = float(np.mean([float(row.x) for row in rows]))
+        label_counts: dict[str, int] = {}
+        for label in labels_in_position:
+            label_counts[label] = label_counts.get(label, 0) + 1
+        label_tokens = [
+            f"{label}\u00d7{count}" if count > 1 else label
+            for label, count in label_counts.items()
+        ]
+        if len(label_tokens) <= 3:
+            annotation = " / ".join(label_tokens)
+        else:
+            displayed_tree_count = sum(list(label_counts.values())[:2])
+            annotation = " / ".join(label_tokens[:2]) + f" +{len(rows) - displayed_tree_count}"
+
+        annotation_rows.append(
+            {
+                "index": int(representative.index),
+                "x": cluster_x,
+                "label": annotation,
+            }
+        )
+    return ordered_df.__class__(annotation_rows)
 
 
 def build_species_style_map(
@@ -635,9 +689,9 @@ def render_freeform_sprite_experiment(excel_path: Path, sheet_name: str, output_
         int(row["index"]): species_label_map[str(row["species"])]
         for _, row in ordered_for_labels.iterrows()
     }
-    label_layout_map = layout_profile_labels(ordered_for_labels)
+    label_annotations = build_profile_label_annotations(ordered_for_labels, label_map)
+    label_layout_map = layout_profile_labels(label_annotations)
     label_row_count = max((row_index for _, row_index in label_layout_map.values()), default=0) + 1
-    draw_df["tree_label"] = draw_df.index.map(label_map)
 
     crown_assets, trunk_assets = load_assets()
     branch_assets = load_branch_assets()
@@ -664,20 +718,29 @@ def render_freeform_sprite_experiment(excel_path: Path, sheet_name: str, output_
     for row in draw_df.sort_values(["height_m", "crown_width"], ascending=[True, False]).itertuples():
         draw_tree(profile_ax, row, species_style_map=species_style_map)
 
-    profile_left, profile_right = compute_profile_limits(draw_df)
     profile_top = max(
-        20.0,
-        max(
-            estimate_tree_profile_top(row, species_style_map)
-            for row in draw_df.itertuples()
-        ) + 0.8,
+        estimate_tree_profile_top(row, species_style_map)
+        for row in draw_df.itertuples()
     )
-    y_limit_top = float(np.ceil(profile_top / 5.0) * 5.0)
-    # Preserve the full crown overhang around the surveyed profile.
-    profile_ax.set_xlim(np.floor(profile_left - SIDE_PADDING_METERS), np.ceil(profile_right + SIDE_PADDING_METERS))
+    y_limit_top = float(
+        np.ceil((profile_top + 0.8) / (2.0 if profile_top <= 12.0 else 5.0))
+        * (2.0 if profile_top <= 12.0 else 5.0)
+    )
+    major_y_step = 2.0 if y_limit_top <= 12.0 else 5.0
+    # Lock every sheet to the same horizontal viewport.  The symmetric five
+    # metre margins preserve boundary crowns while placing 0 and 40 at exactly
+    # the same canvas coordinates in the plan and side views.
+    fixed_x_left = -5.0
+    fixed_x_right = 45.0
+    profile_ax.set_xlim(fixed_x_left, fixed_x_right)
+    top_ax.set_xlim(fixed_x_left, fixed_x_right)
+    # Equal-aspect mode changes the physical axes width when a sheet has a
+    # different Y extent.  Use the locked panel rectangle for page-to-page
+    # alignment instead.
+    top_ax.set_aspect("auto")
     profile_ax.set_ylim(0, y_limit_top)
     profile_ax.set_xticks(np.arange(0, 41, 5))
-    profile_ax.set_yticks(np.arange(0, y_limit_top + 0.1, 5))
+    profile_ax.set_yticks(np.arange(0, y_limit_top + 0.1, major_y_step))
     x_axis_left, x_axis_right = profile_ax.get_xlim()
     profile_ax.set_xticks(np.arange(np.ceil(x_axis_left), np.floor(x_axis_right) + 1, 1), minor=True)
     profile_ax.set_yticks(np.arange(0, y_limit_top + 0.1, 1), minor=True)
@@ -694,11 +757,11 @@ def render_freeform_sprite_experiment(excel_path: Path, sheet_name: str, output_
     profile_ax.spines[["top", "right", "left", "bottom"]].set_visible(False)
 
     profile_label_transform = blended_transform_factory(profile_ax.transData, profile_ax.transAxes)
-    for row in ordered_for_labels.itertuples():
+    for row in label_annotations.itertuples():
         profile_ax.text(
             label_layout_map[int(row.index)][0],
             -0.055 - (0.065 * label_layout_map[int(row.index)][1]),
-            str(label_map[int(row.index)]),
+            str(row.label),
             transform=profile_label_transform,
             ha="center",
             va="top",
@@ -751,18 +814,14 @@ def render_freeform_sprite_experiment(excel_path: Path, sheet_name: str, output_
         bbox_to_anchor=(legend_left, 0.04, legend_width, 0.92),
     )
 
-    figure.subplots_adjust(left=0.09, right=0.91, top=0.96, bottom=0.06, hspace=0.34)
-    # Match the profile panel's visible y-axis/title alignment to the equal-aspect
-    # top view without changing any tree coordinates or profile scale.
-    figure.canvas.draw()
-    top_position = top_ax.get_position()
-    profile_position = profile_ax.get_position()
-    legend_position = legend_ax.get_position()
-    profile_ax.set_position([top_position.x0, profile_position.y0, top_position.width, profile_position.height])
-    legend_ax.set_position([top_position.x0, legend_position.y0, top_position.width, legend_position.height])
+    # Fixed normalized rectangles make every output page pixel-identical in
+    # size and keep both X axes vertically aligned across all worksheets.
+    top_ax.set_position([0.09, 0.64, 0.82, 0.29])
+    profile_ax.set_position([0.09, 0.31, 0.82, 0.25])
+    legend_ax.set_position([0.09, 0.06, 0.82, 0.15])
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{excel_path.stem}_{sheet_name.replace(' ', '_')}_freeform_sprite_experiment.png"
-    figure.savefig(output_path, dpi=220, bbox_inches="tight")
+    figure.savefig(output_path, dpi=220, facecolor="white")
     plt.close(figure)
     return output_path
 

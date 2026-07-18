@@ -234,10 +234,6 @@ def add_bushy_crown(
 
 
 def draw_top_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) -> None:
-    x_min = float(np.floor(df["x"].min()))
-    x_max = float(np.ceil(df["x"].max()))
-    y_min = float(np.floor(df["y"].min()))
-    y_max = float(np.ceil(df["y"].max()))
     crown_left, crown_right, crown_bottom, crown_top = compute_top_view_limits(df)
 
     for row in df.itertuples(index=False):
@@ -257,13 +253,11 @@ def draw_top_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) -> Non
         )
 
     ax.scatter(df["x"], df["y"], s=8, color="black", zorder=3)
-    plot_width = max(x_max - x_min, 1.0)
-    plot_height = max(y_max - y_min, 1.0)
     ax.add_patch(
         Rectangle(
-            (x_min, y_min),
-            plot_width,
-            plot_height,
+            (0.0, 0.0),
+            40.0,
+            10.0,
             fill=False,
             linewidth=1.8,
             edgecolor="black",
