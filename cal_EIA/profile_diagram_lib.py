@@ -132,41 +132,6 @@ def audit_profile_sheet(excel_path: Path, sheet_name: str) -> dict[str, object]:
     }
 
 
-def add_multi_stem_metadata(df: pd.DataFrame) -> pd.DataFrame:
-    """Mark separately measured stems that share one tree crown for rendering.
-
-    Field records list each stem when its DBH/GBH differs.  When species,
-    height, position, first branch and all crown measurements match, the rows
-    describe one tree with multiple stems.  The renderer keeps every stem but
-    draws the shared crown once.
-    """
-    draw_df = df.copy()
-    grouping_columns = [
-        "species",
-        "height_m",
-        "first_branch_m",
-        "x",
-        "y",
-        "crown_x_plus",
-        "crown_x_minus",
-        "crown_y_plus",
-        "crown_y_minus",
-    ]
-    match_frame = draw_df[grouping_columns].copy()
-    for column in grouping_columns:
-        if column != "species":
-            match_frame[column] = pd.to_numeric(match_frame[column], errors="coerce").round(3)
-    draw_df["tree_group_id"] = pd.MultiIndex.from_frame(match_frame).factorize()[0]
-
-    draw_df = draw_df.sort_values(["tree_group_id", "girth_cm", "no"], na_position="last").copy()
-    draw_df["stem_count"] = draw_df.groupby("tree_group_id")["tree_group_id"].transform("size")
-    draw_df["stem_rank"] = draw_df.groupby("tree_group_id").cumcount()
-    crown_span = (draw_df["crown_x_plus"] + draw_df["crown_x_minus"]).clip(lower=0.2)
-    stem_spacing = (crown_span * 0.08).clip(lower=0.12, upper=0.35)
-    draw_df["stem_offset_m"] = (draw_df["stem_rank"] - (draw_df["stem_count"] - 1) / 2) * stem_spacing
-    return draw_df.reset_index(drop=True)
-
-
 def list_profile_sheets(excel_path: Path) -> list[str]:
     # Explicitly close the workbook so temporary uploaded files can be removed
     # reliably on Windows after profile generation finishes.
@@ -269,11 +234,9 @@ def add_bushy_crown(
 
 
 def draw_top_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) -> None:
-    draw_df = add_multi_stem_metadata(df)
     crown_left, crown_right, crown_bottom, crown_top = compute_top_view_limits(df)
 
-    crown_df = draw_df.drop_duplicates("tree_group_id", keep="first")
-    for row in crown_df.itertuples(index=False):
+    for row in df.itertuples(index=False):
         crown_width = max(row.crown_x_plus + row.crown_x_minus, 0.2)
         crown_height = max(row.crown_y_plus + row.crown_y_minus, 0.2)
         crown_center_x = row.x + (row.crown_x_plus - row.crown_x_minus) / 2
@@ -289,7 +252,7 @@ def draw_top_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) -> Non
             zorder=2,
         )
 
-    ax.scatter(draw_df["x"] + draw_df["stem_offset_m"], draw_df["y"], s=12, color="black", zorder=3)
+    ax.scatter(df["x"], df["y"], s=8, color="black", zorder=3)
     ax.add_patch(
         Rectangle(
             (0.0, 0.0),
@@ -313,8 +276,8 @@ def draw_top_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) -> Non
 
 
 def draw_profile_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) -> None:
-    draw_df = add_multi_stem_metadata(df)
-    trunk_widths = build_trunk_widths(draw_df)
+    trunk_widths = build_trunk_widths(df)
+    draw_df = df.copy()
     draw_df["trunk_width"] = trunk_widths
     draw_df["crown_width"] = (
         (draw_df["crown_x_plus"] + draw_df["crown_x_minus"]) * PROFILE_CROWN_WIDTH_SCALE
@@ -325,10 +288,9 @@ def draw_profile_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) ->
     draw_df["crown_area"] = draw_df["crown_width"] * draw_df["crown_depth"]
 
     for row in draw_df.itertuples(index=False):
-        trunk_x = float(row.x + row.stem_offset_m)
         trunk_top_y = min(max(row.height_m - row.crown_depth, 0) + row.crown_depth * TRUNK_CROWN_OVERLAP_RATIO, 19.6)
         ax.plot(
-            [trunk_x, trunk_x],
+            [row.x, row.x],
             [0, trunk_top_y],
             color="#4e342e",
             linewidth=float(row.trunk_width),
@@ -343,10 +305,10 @@ def draw_profile_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) ->
             branch_length = compute_first_branch_length(float(row.crown_width))
             branch_dx = branch_length * np.cos(np.deg2rad(45)) * branch_direction
             branch_dy = branch_length * np.sin(np.deg2rad(45))
-            branch_end_x = float(trunk_x + branch_dx)
+            branch_end_x = float(row.x + branch_dx)
             branch_end_y = float(min(branch_origin_y + branch_dy, 19.65))
             ax.plot(
-                [trunk_x, branch_end_x],
+                [row.x, branch_end_x],
                 [branch_origin_y, branch_end_y],
                 color="#4e342e",
                 linewidth=max(float(row.trunk_width) * 0.45, 1.0),
@@ -367,10 +329,7 @@ def draw_profile_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) ->
                 zorder=3.2,
             )
 
-    crown_df = (
-        draw_df.sort_values(["crown_area", "height_m"], ascending=[False, False])
-        .drop_duplicates("tree_group_id", keep="first")
-    )
+    crown_df = draw_df.sort_values(["crown_area", "height_m"], ascending=[False, False])
     for row in crown_df.itertuples(index=False):
         crown_width = float(row.crown_width)
         crown_base_y = float(max(row.height_m - row.crown_depth, 0))
