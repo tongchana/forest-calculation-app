@@ -382,6 +382,7 @@ def prepare_block_frame(
     block_type: str,
     expected_columns: dict[str, int],
     numeric_columns: list[str],
+    fallback_plot: object | None = None,
 ) -> pd.DataFrame:
     records: list[dict[str, object]] = []
     for excel_row_no, row in enumerate(source_df.itertuples(index=False, name=None), start=3):
@@ -404,10 +405,37 @@ def prepare_block_frame(
         if normalize_text(record.get("Species")) == "":
             continue
         no_numeric = pd.to_numeric(pd.Series([record.get("No.")]), errors="coerce").iloc[0]
-        if pd.isna(no_numeric):
+        # The record number is a display identifier.  It is occasionally absent
+        # in regeneration blocks, while the species, count and plot are present.
+        # Keep those rows; require a valid record number only for Tree rows.
+        if block_type == "Tree" and pd.isna(no_numeric):
+            continue
+        if normalize_text(record.get("No.")) != "" and pd.isna(no_numeric):
             continue
         if block_type in {"Tree", "Sapling", "Seedling"} and normalize_text(record.get("Plot")) == "":
-            continue
+            # Some field templates have the sapling plot number entered in the
+            # adjacent "Number" column, or omit the plot column where the sheet
+            # itself contains exactly one tree plot.  Repair only these
+            # unambiguous cases so valid regeneration records are not discarded.
+            if block_type == "Sapling" and normalize_text(record.get("Number")) != "":
+                record["Plot"] = normalize_text(record["Number"])
+                LOG.warning(
+                    "Sheet '%s', Sapling row %s: using Number=%s as Plot because Plot is blank.",
+                    sheet_name,
+                    excel_row_no,
+                    record["Plot"],
+                )
+            elif fallback_plot is not None and normalize_text(fallback_plot) != "":
+                record["Plot"] = normalize_text(fallback_plot)
+                LOG.warning(
+                    "Sheet '%s', %s row %s: using the only Tree plot (%s) because Plot is blank.",
+                    sheet_name,
+                    block_type,
+                    excel_row_no,
+                    record["Plot"],
+                )
+            else:
+                continue
         records.append(record)
 
     frame = pd.DataFrame(records)
@@ -1543,6 +1571,7 @@ def process_workbook(
             LOG.warning("Could not read sheet '%s': %s", sheet_name, exc)
             continue
 
+        tree_frame = pd.DataFrame()
         if validate_block_headers(sheet_name, row_headers, "Tree", TREE_COLUMNS):
             tree_frame = prepare_block_frame(
                 sheet_df,
@@ -1556,6 +1585,13 @@ def process_workbook(
             else:
                 LOG.warning("Sheet '%s' has no usable Tree rows.", sheet_name)
 
+        unique_tree_plots = []
+        if not tree_frame.empty:
+            unique_tree_plots = sorted(
+                plot for plot in tree_frame["Plot"].dropna().unique().tolist() if normalize_text(plot) != ""
+            )
+        fallback_plot = unique_tree_plots[0] if len(unique_tree_plots) == 1 else None
+
         if validate_block_headers(sheet_name, row_headers, "Sapling", SAPLING_COLUMNS):
             sapling_frame = prepare_block_frame(
                 sheet_df,
@@ -1563,6 +1599,7 @@ def process_workbook(
                 "Sapling",
                 SAPLING_COLUMNS,
                 ["Girth (cm)", "Height (m)", "Number"],
+                fallback_plot=fallback_plot,
             )
             if not sapling_frame.empty:
                 sapling_frames.append(sapling_frame)
@@ -1576,6 +1613,7 @@ def process_workbook(
                 "Seedling",
                 SEEDLING_COLUMNS,
                 ["Number"],
+                fallback_plot=fallback_plot,
             )
             if not seedling_frame.empty:
                 seedling_frames.append(seedling_frame)
