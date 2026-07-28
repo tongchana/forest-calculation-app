@@ -125,6 +125,20 @@ type SheetGroup = {
   sheetNames: string[];
 };
 
+type ComponentPreset = {
+  kind: "forest-component-preset";
+  version: 1;
+  id: string;
+  name: string;
+  savedAt: string;
+  workbookName: string;
+  worksheetNames: string[];
+  components: {
+    name: string;
+    sheetNames: string[];
+  }[];
+};
+
 type CalculationScope = "biomass_only" | "economic_only" | "biomass_and_economic";
 
 type EconomicInputState = {
@@ -144,6 +158,8 @@ const workflowSectionIds = [
   "run-calculation",
   "export-outputs",
 ] as const;
+
+const COMPONENT_PRESET_STORAGE_KEY = "forest-calculation-component-presets-v1";
 
 function base64ToBlob(base64: string, mimeType: string): Blob {
   const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
@@ -180,6 +196,49 @@ function normaliseGroupPayload(groups: SheetGroup[]) {
       name: group.name.trim(),
       sheet_names: group.sheetNames,
     }));
+}
+
+function parseComponentPreset(value: unknown): ComponentPreset {
+  if (!value || typeof value !== "object") {
+    throw new Error("The selected file is not a component preset.");
+  }
+
+  const candidate = value as Partial<ComponentPreset>;
+  if (candidate.kind !== "forest-component-preset" || candidate.version !== 1 || !Array.isArray(candidate.components)) {
+    throw new Error("This preset format is not supported.");
+  }
+
+  const components = candidate.components
+    .filter((component): component is { name: string; sheetNames: string[] } => {
+      return Boolean(
+        component &&
+          typeof component === "object" &&
+          typeof component.name === "string" &&
+          Array.isArray(component.sheetNames),
+      );
+    })
+    .map((component) => ({
+      name: component.name.trim(),
+      sheetNames: [...new Set(component.sheetNames.filter((sheet): sheet is string => typeof sheet === "string" && Boolean(sheet.trim())))],
+    }))
+    .filter((component) => component.name);
+
+  if (components.length === 0) {
+    throw new Error("The preset does not contain any named components.");
+  }
+
+  return {
+    kind: "forest-component-preset",
+    version: 1,
+    id: typeof candidate.id === "string" && candidate.id ? candidate.id : crypto.randomUUID(),
+    name: typeof candidate.name === "string" && candidate.name.trim() ? candidate.name.trim() : "Imported component preset",
+    savedAt: typeof candidate.savedAt === "string" ? candidate.savedAt : new Date().toISOString(),
+    workbookName: typeof candidate.workbookName === "string" ? candidate.workbookName : "",
+    worksheetNames: Array.isArray(candidate.worksheetNames)
+      ? candidate.worksheetNames.filter((sheet): sheet is string => typeof sheet === "string")
+      : [],
+    components,
+  };
 }
 
 function formatNumberInput(value: string) {
@@ -238,6 +297,9 @@ export default function Page() {
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [workbookFile, setWorkbookFile] = useState<File | null>(null);
   const [groups, setGroups] = useState<SheetGroup[]>([]);
+  const [presetName, setPresetName] = useState("");
+  const [savedPresets, setSavedPresets] = useState<ComponentPreset[]>([]);
+  const [selectedPresetId, setSelectedPresetId] = useState("");
   const [economicInputs, setEconomicInputs] = useState<Record<string, EconomicInputState>>({});
   const [result, setResult] = useState<CalculationResponse | null>(null);
   const [summaryDownloadName, setSummaryDownloadName] = useState("forest_summary.xlsx");
@@ -250,6 +312,7 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
   const [activeStepId, setActiveStepId] = useState<(typeof workflowSectionIds)[number]>("upload-workbook");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const presetFileInputRef = useRef<HTMLInputElement | null>(null);
   const groupsRef = useRef<SheetGroup[]>([]);
   const economicInputsRef = useRef<Record<string, EconomicInputState>>({});
 
@@ -269,6 +332,29 @@ export default function Page() {
       }
     }
     void loadConfig();
+  }, []);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(COMPONENT_PRESET_STORAGE_KEY);
+      if (!saved) {
+        return;
+      }
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed)) {
+        return;
+      }
+      const validPresets = parsed.flatMap((item) => {
+        try {
+          return [parseComponentPreset(item)];
+        } catch {
+          return [];
+        }
+      });
+      setSavedPresets(validPresets);
+    } catch {
+      // Ignore malformed browser storage and allow the user to save a new preset.
+    }
   }, []);
 
   useEffect(() => {
@@ -530,6 +616,160 @@ export default function Page() {
     setGroups(nextGroups);
   }
 
+  function persistPresets(nextPresets: ComponentPreset[]) {
+    setSavedPresets(nextPresets);
+    window.localStorage.setItem(COMPONENT_PRESET_STORAGE_KEY, JSON.stringify(nextPresets));
+  }
+
+  function buildCurrentPreset(nameOverride?: string): ComponentPreset {
+    const components = groupsRef.current
+      .filter((group) => group.name.trim())
+      .map((group) => ({
+        name: group.name.trim(),
+        sheetNames: [...group.sheetNames],
+      }));
+    if (components.length === 0) {
+      throw new Error("Create and name at least one component before saving a preset.");
+    }
+
+    const defaultName = workbookFile?.name.replace(/\.xlsx$/i, "") || "Forest components";
+    return {
+      kind: "forest-component-preset",
+      version: 1,
+      id: crypto.randomUUID(),
+      name: nameOverride?.trim() || presetName.trim() || `${defaultName} components`,
+      savedAt: new Date().toISOString(),
+      workbookName: workbookFile?.name ?? "",
+      worksheetNames: [...sheetNames],
+      components,
+    };
+  }
+
+  function applyComponentPreset(preset: ComponentPreset) {
+    if (sheetNames.length === 0) {
+      throw new Error("Upload and inspect an Excel workbook before loading a component preset.");
+    }
+
+    const availableSheets = new Set(sheetNames);
+    const assignedSheets = new Set<string>();
+    const missingSheets = new Set<string>();
+    const duplicateSheets = new Set<string>();
+    const nextGroups = preset.components.map((component) => {
+      const matchedSheets: string[] = [];
+      component.sheetNames.forEach((sheet) => {
+        if (!availableSheets.has(sheet)) {
+          missingSheets.add(sheet);
+        } else if (assignedSheets.has(sheet)) {
+          duplicateSheets.add(sheet);
+        } else {
+          assignedSheets.add(sheet);
+          matchedSheets.push(sheet);
+        }
+      });
+      return {
+        id: crypto.randomUUID(),
+        name: component.name,
+        sheetNames: matchedSheets,
+      };
+    });
+
+    replaceGroups(nextGroups);
+    setPresetName(preset.name);
+    setResult(null);
+
+    const notes = [`Loaded ${nextGroups.length} component(s) from "${preset.name}".`];
+    if (preset.workbookName && workbookFile?.name && preset.workbookName !== workbookFile.name) {
+      notes.push(`Preset was created for ${preset.workbookName}; review the worksheet mapping before calculation.`);
+    }
+    if (missingSheets.size > 0) {
+      notes.push(`Not found in this workbook: ${[...missingSheets].join(", ")}.`);
+    }
+    if (duplicateSheets.size > 0) {
+      notes.push(`Duplicate assignments skipped: ${[...duplicateSheets].join(", ")}.`);
+    }
+    setMessage(notes.join(" "));
+    setError(null);
+  }
+
+  function savePresetInBrowser() {
+    try {
+      const preset = buildCurrentPreset();
+      const existing = savedPresets.find((item) => item.name.toLocaleLowerCase() === preset.name.toLocaleLowerCase());
+      const savedPreset = existing ? { ...preset, id: existing.id } : preset;
+      const nextPresets = existing
+        ? savedPresets.map((item) => (item.id === existing.id ? savedPreset : item))
+        : [...savedPresets, savedPreset];
+      persistPresets(nextPresets);
+      setSelectedPresetId(savedPreset.id);
+      setPresetName(savedPreset.name);
+      setMessage(`Saved "${savedPreset.name}" in this browser. You can load and edit it after uploading the workbook again.`);
+      setError(null);
+    } catch (presetError) {
+      setError(presetError instanceof Error ? presetError.message : "Could not save the component preset.");
+    }
+  }
+
+  function loadSelectedPreset() {
+    const preset = savedPresets.find((item) => item.id === selectedPresetId);
+    if (!preset) {
+      setError("Select a saved preset to load.");
+      return;
+    }
+    try {
+      applyComponentPreset(preset);
+    } catch (presetError) {
+      setError(presetError instanceof Error ? presetError.message : "Could not load the component preset.");
+    }
+  }
+
+  function deleteSelectedPreset() {
+    const preset = savedPresets.find((item) => item.id === selectedPresetId);
+    if (!preset) {
+      setError("Select a saved preset to delete.");
+      return;
+    }
+    const nextPresets = savedPresets.filter((item) => item.id !== preset.id);
+    persistPresets(nextPresets);
+    setSelectedPresetId("");
+    setMessage(`Deleted "${preset.name}" from this browser.`);
+    setError(null);
+  }
+
+  function downloadCurrentPreset() {
+    try {
+      const preset = buildCurrentPreset();
+      const safeName = preset.name
+        .replace(/[<>:"/\\|?*\u0000-\u001F]+/g, "_")
+        .replace(/[. ]+$/g, "")
+        .trim() || "forest_components";
+      const blob = new Blob([JSON.stringify(preset, null, 2)], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${safeName}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setMessage(`Downloaded "${safeName}.json".`);
+      setError(null);
+    } catch (presetError) {
+      setError(presetError instanceof Error ? presetError.message : "Could not download the component preset.");
+    }
+  }
+
+  async function handlePresetFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+    try {
+      const preset = parseComponentPreset(JSON.parse(await file.text()));
+      applyComponentPreset(preset);
+    } catch (presetError) {
+      setError(presetError instanceof Error ? presetError.message : "Could not import the component preset.");
+    }
+  }
+
   function replaceEconomicInputs(
     nextInputsOrUpdater: Record<string, EconomicInputState> | ((current: Record<string, EconomicInputState>) => Record<string, EconomicInputState>),
   ) {
@@ -760,6 +1000,97 @@ export default function Page() {
               id="group-components"
               title="Build grouped components"
             >
+              <div className="mb-6 rounded-[30px] border border-[#C9D8C2] bg-[#F1F7EE] p-5">
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#1F5E3B]">Save and reuse components</p>
+                    <p className="mt-2 max-w-3xl text-sm leading-6 text-[#667085]">
+                      Save this setup in the current browser or download a JSON preset. Load it after uploading the workbook again, then continue editing before calculation.
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-white px-4 py-2 text-xs font-semibold text-[#667085] ring-1 ring-[#DDE5D5]">
+                    {savedPresets.length} saved in this browser
+                  </span>
+                </div>
+
+                <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(220px,1fr)_auto_auto_auto]">
+                  <label>
+                    <span className="sr-only">Preset name</span>
+                    <input
+                      className="w-full rounded-2xl border border-[#DDE5D5] bg-white px-4 py-3 font-semibold text-[#1F2933] outline-none focus:border-[#1F5E3B]"
+                      placeholder={workbookFile ? `${workbookFile.name.replace(/\.xlsx$/i, "")} components` : "Preset name"}
+                      value={presetName}
+                      onChange={(event) => setPresetName(event.target.value)}
+                    />
+                  </label>
+                  <button
+                    className="rounded-full bg-[#1F5E3B] px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45"
+                    disabled={groups.length === 0}
+                    type="button"
+                    onClick={savePresetInBrowser}
+                  >
+                    Save in browser
+                  </button>
+                  <button
+                    className="rounded-full border border-[#1F5E3B] bg-white px-5 py-3 text-sm font-semibold text-[#1F5E3B] disabled:cursor-not-allowed disabled:opacity-45"
+                    disabled={groups.length === 0}
+                    type="button"
+                    onClick={downloadCurrentPreset}
+                  >
+                    Download JSON
+                  </button>
+                  <button
+                    className="rounded-full border border-[#1F5E3B] bg-white px-5 py-3 text-sm font-semibold text-[#1F5E3B] disabled:cursor-not-allowed disabled:opacity-45"
+                    disabled={sheetNames.length === 0}
+                    type="button"
+                    onClick={() => presetFileInputRef.current?.click()}
+                  >
+                    Import JSON
+                  </button>
+                  <input
+                    ref={presetFileInputRef}
+                    accept="application/json,.json"
+                    className="hidden"
+                    type="file"
+                    onChange={handlePresetFileChange}
+                  />
+                </div>
+
+                <div className="mt-4 grid gap-3 border-t border-[#DDE5D5] pt-4 lg:grid-cols-[minmax(240px,1fr)_auto_auto]">
+                  <label>
+                    <span className="sr-only">Saved component preset</span>
+                    <select
+                      className="w-full rounded-2xl border border-[#DDE5D5] bg-white px-4 py-3 font-semibold text-[#1F2933] outline-none focus:border-[#1F5E3B]"
+                      value={selectedPresetId}
+                      onChange={(event) => setSelectedPresetId(event.target.value)}
+                    >
+                      <option value="">Select a preset saved in this browser</option>
+                      {savedPresets.map((preset) => (
+                        <option key={preset.id} value={preset.id}>
+                          {preset.name} · {preset.components.length} component(s)
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    className="rounded-full bg-[#E7EFE2] px-5 py-3 text-sm font-semibold text-[#1F5E3B] disabled:cursor-not-allowed disabled:opacity-45"
+                    disabled={!selectedPresetId || sheetNames.length === 0}
+                    type="button"
+                    onClick={loadSelectedPreset}
+                  >
+                    Load and edit
+                  </button>
+                  <button
+                    className="rounded-full border border-red-200 bg-white px-5 py-3 text-sm font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-45"
+                    disabled={!selectedPresetId}
+                    type="button"
+                    onClick={deleteSelectedPreset}
+                  >
+                    Delete preset
+                  </button>
+                </div>
+              </div>
+
               {groups.length === 0 ? (
                 <EmptyState title="No grouped components yet" body="This step is optional. The app can still calculate every worksheet separately." />
               ) : (
