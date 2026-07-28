@@ -658,15 +658,19 @@ def render_freeform_sprite_experiment(excel_path: Path, sheet_name: str, output_
             for row in draw_df.itertuples()
         ) + 0.8,
     )
-    y_limit_top = float(np.ceil(profile_top / 5.0) * 5.0)
+    # Keep 20 m as the survey-comparison minimum.  The small visual headroom
+    # keeps the highest tick label inside the canvas while the tick itself
+    # remains on the rounded 5 m scale.
+    y_tick_top = float(np.ceil(profile_top / 5.0) * 5.0)
+    y_axis_top = y_tick_top + 0.75
     # Preserve the full crown overhang around the surveyed profile.
     profile_ax.set_xlim(np.floor(profile_left - SIDE_PADDING_METERS), np.ceil(profile_right + SIDE_PADDING_METERS))
-    profile_ax.set_ylim(0, y_limit_top)
+    profile_ax.set_ylim(0, y_axis_top)
     profile_ax.set_xticks(np.arange(0, 41, 5))
-    profile_ax.set_yticks(np.arange(0, y_limit_top + 0.1, 5))
+    profile_ax.set_yticks(np.arange(0, y_tick_top + 0.1, 5))
     x_axis_left, x_axis_right = profile_ax.get_xlim()
     profile_ax.set_xticks(np.arange(np.ceil(x_axis_left), np.floor(x_axis_right) + 1, 1), minor=True)
-    profile_ax.set_yticks(np.arange(0, y_limit_top + 0.1, 1), minor=True)
+    profile_ax.set_yticks(np.arange(0, y_tick_top + 0.1, 1), minor=True)
     profile_ax.set_xlabel(
         "\u0e23\u0e30\u0e22\u0e30\u0e17\u0e32\u0e07 (\u0e40\u0e21\u0e15\u0e23)",
         fontproperties=thai_axis_font,
