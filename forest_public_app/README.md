@@ -103,6 +103,8 @@ For a click-by-click setup guide, see:
 
 - all uploaded worksheet names are visible to the user
 - grouped components are optional
+- component presets can be saved in browser storage or exported/imported as versioned JSON files
+- imported presets remain editable and validate missing or duplicate worksheet assignments
 - plot area default is `0.100`
 - the backend still uses the same existing calculation workflow
 - the public UI is separated from Streamlit so the design can evolve more freely
