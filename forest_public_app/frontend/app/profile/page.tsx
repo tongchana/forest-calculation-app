@@ -314,10 +314,10 @@ export default function ProfilePage() {
                     Profile Diagram Studio
                   </h2>
                   <p className="mt-5 max-w-2xl text-[15px] leading-8 text-[#667085] sm:text-base">
-                    Upload profile Excel data, validate tree structure fields, generate canopy profile diagrams, and download image outputs.
+                    Upload profile Excel data, validate tree structure fields, generate canopy profile diagrams, and download image outputs. The editor keeps the approved 20 m minimum vertical scale and lets you refine profile assets directly on canvas.
                   </p>
                   <div className="mt-6 flex flex-wrap gap-2">
-                    {["Template", "Upload", "Validate", "Generate", "Download"].map((chip) => (
+                    {["Template", "Upload", "Validate", "Generate", "Edit", "Download"].map((chip) => (
                       <span key={chip} className="rounded-full border border-[#DDE5D5] bg-[#F6F8F4] px-4 py-2 text-sm font-semibold text-[#1F5E3B]">
                         {chip}
                       </span>
@@ -332,6 +332,24 @@ export default function ProfilePage() {
                     <MetricTile label="Outputs" value={result ? "Ready" : "Waiting"} help="ZIP output unlocks after rendering." />
                   </div>
                 </div>
+              </div>
+            </section>
+
+            <section className="rounded-[30px] border border-[#DDE5D5] bg-[#F1F7EE] p-6 shadow-[0_14px_35px_rgba(31,94,59,0.06)] sm:p-7">
+              <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#6A8F5D]">Direct canvas editing</p>
+                  <h2 className="mt-2 text-2xl font-semibold text-[#1F2933]">Refine the first branch and crown in the diagram</h2>
+                  <p className="mt-2 max-w-3xl text-sm leading-7 text-[#55705F]">
+                    Select a crown or first branch directly in the scene, drag it, resize from a corner, rotate the branch, undo with Ctrl+Z, then export a clean JPEG without editor handles.
+                  </p>
+                </div>
+                <a
+                  className="inline-flex shrink-0 items-center justify-center rounded-full bg-[#1F5E3B] px-6 py-3 text-sm font-bold text-white transition hover:-translate-y-0.5"
+                  href="/profile-editor/"
+                >
+                  Open Profile Editor
+                </a>
               </div>
             </section>
 

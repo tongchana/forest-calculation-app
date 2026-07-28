@@ -718,15 +718,18 @@ def render_freeform_sprite_experiment(excel_path: Path, sheet_name: str, output_
     for row in draw_df.sort_values(["height_m", "crown_width"], ascending=[True, False]).itertuples():
         draw_tree(profile_ax, row, species_style_map=species_style_map)
 
+    # Compare every survey on the same 20 m minimum scale.  Keep a small
+    # headroom above the final tick so its label remains fully visible.
     profile_top = max(
-        estimate_tree_profile_top(row, species_style_map)
-        for row in draw_df.itertuples()
+        20.0,
+        max(
+            estimate_tree_profile_top(row, species_style_map)
+            for row in draw_df.itertuples()
+        ) + 0.8,
     )
-    y_limit_top = float(
-        np.ceil((profile_top + 0.8) / (2.0 if profile_top <= 12.0 else 5.0))
-        * (2.0 if profile_top <= 12.0 else 5.0)
-    )
-    major_y_step = 2.0 if y_limit_top <= 12.0 else 5.0
+    y_tick_top = float(np.ceil(profile_top / 5.0) * 5.0)
+    y_axis_top = y_tick_top + 0.75
+    major_y_step = 5.0
     # Lock every sheet to the same horizontal viewport.  The symmetric five
     # metre margins preserve boundary crowns while placing 0 and 40 at exactly
     # the same canvas coordinates in the plan and side views.
@@ -738,12 +741,12 @@ def render_freeform_sprite_experiment(excel_path: Path, sheet_name: str, output_
     # different Y extent.  Use the locked panel rectangle for page-to-page
     # alignment instead.
     top_ax.set_aspect("auto")
-    profile_ax.set_ylim(0, y_limit_top)
+    profile_ax.set_ylim(0, y_axis_top)
     profile_ax.set_xticks(np.arange(0, 41, 5))
-    profile_ax.set_yticks(np.arange(0, y_limit_top + 0.1, major_y_step))
+    profile_ax.set_yticks(np.arange(0, y_tick_top + 0.1, major_y_step))
     x_axis_left, x_axis_right = profile_ax.get_xlim()
     profile_ax.set_xticks(np.arange(np.ceil(x_axis_left), np.floor(x_axis_right) + 1, 1), minor=True)
-    profile_ax.set_yticks(np.arange(0, y_limit_top + 0.1, 1), minor=True)
+    profile_ax.set_yticks(np.arange(0, y_tick_top + 0.1, 1), minor=True)
     profile_ax.set_xlabel(
         "\u0e23\u0e30\u0e22\u0e30\u0e17\u0e32\u0e07 (\u0e40\u0e21\u0e15\u0e23)",
         fontproperties=thai_axis_font,
