@@ -104,7 +104,7 @@ class ForestCalculationLogicTests(unittest.TestCase):
             output_path = Path(temp_dir) / "forest_details.xlsx"
             root_calc.write_detail_workbook(output_path, sheets)
             workbook = load_workbook(output_path)
-            summary_sheet = workbook["COMPONENT_SUMMARY"]
+            summary_sheet = workbook["สรุป_Component"]
             self.assertEqual(summary_sheet.max_row - 3, 10)
             self.assertEqual(summary_sheet["A1"].font.name, "TH Sarabun PSK")
             self.assertEqual(summary_sheet["A1"].font.sz, 15)
@@ -112,6 +112,10 @@ class ForestCalculationLogicTests(unittest.TestCase):
             self.assertEqual(summary_sheet["A3"].font.sz, 15)
             self.assertEqual(summary_sheet["A4"].font.name, "TH Sarabun PSK")
             self.assertEqual(summary_sheet["A4"].font.sz, 15)
+            self.assertEqual(summary_sheet.auto_filter.ref, f"A3:L{summary_sheet.max_row}")
+            self.assertEqual(len(summary_sheet.tables), 0)
+            self.assertIn("ตรวจสอบความหนาแน่น", workbook.sheetnames)
+            self.assertIn("ข้อมูลต้นไม้_ไม้หนุ่ม", workbook.sheetnames)
 
     def test_tree_calculations_fall_back_to_gbh_when_dbh_is_blank(self):
         tree_df = pd.DataFrame(
