@@ -10,7 +10,6 @@ import numpy as np
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 
 
@@ -1841,71 +1840,31 @@ def _build_detail_report_frames(sheets: dict[str, pd.DataFrame]) -> list[tuple[s
     guide = pd.DataFrame(
         [
             {
-                "หัวข้อ": "เริ่มตรวจจากที่ใด",
-                "คำอธิบาย": "เริ่มที่ COMPONENT_SUMMARY แล้วใช้ชื่อ Component กรองตาราง trace และตารางข้อมูลดิบ",
+                "สิ่งที่ไฟล์นี้ตอบได้": "ยอด Component มาจากไหน",
+                "วิธีดู": "เริ่มที่ สรุป_Component แล้วใช้ชื่อ Component กรองย้อนกลับในชีตตรวจสอบและชีตข้อมูลรายละเอียด",
             },
             {
-                "หัวข้อ": "จำนวนต้นต่อไร่",
-                "คำอธิบาย": "จำนวนต้นในช่วง GBH ÷ (จำนวนแปลง × ขนาดแปลง (ha) × ไร่ต่อเฮกตาร์)",
+                "สิ่งที่ไฟล์นี้ตอบได้": "จำนวนต้นต่อไร่คำนวณอย่างไร",
+                "วิธีดู": "ดู ตรวจสอบความหนาแน่น: จำนวนต้น ÷ (จำนวนแปลง × ขนาดแปลง (ha) × ไร่ต่อเฮกตาร์)",
             },
             {
-                "หัวข้อ": "ช่วง GBH",
-                "คำอธิบาย": "ใช้เส้นรอบวงลำต้น (GBH) 10–30, 30–60 และ >60 ซม. ไม่ใช่ DBH",
+                "สิ่งที่ไฟล์นี้ตอบได้": "ช่วงขนาดลำต้น",
+                "วิธีดู": "ใช้ GBH (เส้นรอบวงลำต้น) 10–30, 30–60 และ >60 ซม. ส่วน DBH ที่แสดงในข้อมูลรายละเอียดคำนวณจาก GBH ÷ π",
             },
             {
-                "หัวข้อ": "การรองรับหลาย Component",
-                "คำอธิบาย": "ตารางสร้างตาม component metadata แบบ dynamic ไม่มีจำนวน component ตายตัวในไฟล์ detail",
+                "สิ่งที่ไฟล์นี้ตอบได้": "สมาชิกของ Component",
+                "วิธีดู": "ดู ตั้งค่า_กลุ่ม ซึ่งแสดงว่า worksheet ต้นทางแต่ละชีตถูกรวมอยู่ใน Component ใด",
             },
             {
-                "หัวข้อ": "ชนิดไม้ไม่ตรง master",
-                "คำอธิบาย": "ตรวจ UNMATCHED_SPECIES ก่อนใช้ผล biomass; ปริมาตรอาจยังคำนวณด้วย fallback group",
+                "สิ่งที่ไฟล์นี้ตอบได้": "ชนิดไม้ที่ยังไม่ตรง master",
+                "วิธีดู": "ดู ชนิดไม่ตรง ก่อนใช้ผล biomass; ปริมาตรอาจยังคำนวณด้วยสมการ fallback group",
+            },
+            {
+                "สิ่งที่ไฟล์นี้ตอบได้": "สีในรายงาน",
+                "วิธีดู": "น้ำเงินเข้ม = ชื่อรายงาน, เขียว = หัวตาราง, ฟ้าอ่อน = แถวข้อมูลสลับ, เหลือง = รายการที่ควรตรวจสอบ",
             },
         ]
     )
-
-    mapping = pd.DataFrame(
-        _detail_component_rows(sheets),
-        columns=["Component order", "Component", "Internal component", "Source worksheet"],
-    )
-    if mapping.empty:
-        mapping = pd.DataFrame(
-            [
-                {
-                    "Component order": idx,
-                    "Component": target,
-                    "Internal component": target,
-                    "Source worksheet": target,
-                }
-                for idx, target in enumerate(targets, start=1)
-            ]
-        )
-
-    summary_rows: list[dict[str, object]] = []
-    summary_all = sheets.get("SUMMARY_ALL", pd.DataFrame())
-    for target in targets:
-        matched = (
-            summary_all[summary_all["sheet_name"].astype(str) == target]
-            if not summary_all.empty and "sheet_name" in summary_all.columns
-            else pd.DataFrame()
-        )
-        row = matched.iloc[0].to_dict() if not matched.empty else {}
-        summary_rows.append(
-            {
-                "Component": display_map.get(target, target),
-                "Source worksheets": _detail_source_sheet_label(target, sheets),
-                "Tree records": row.get("n_tree", 0),
-                "Sapling records": row.get("n_sapling", 0),
-                "Seedling records": row.get("n_seedling_records", 0),
-                "Bamboo records": row.get("n_bamboo_records", 0),
-                "Tree biomass": row.get("total_tree_biomass", 0),
-                "Tree volume (m3)": row.get("total_tree_volume_m3", 0),
-                "Sapling volume (m3)": row.get("total_sapling_volume_m3", 0),
-                "Shannon index": row.get("shannon_index"),
-                "Unmatched tree species": row.get("n_unmatched_tree_species", 0),
-                "Unmatched sapling species": row.get("n_unmatched_sapling_species", 0),
-            }
-        )
-    component_summary = pd.DataFrame(summary_rows)
 
     density_rows: list[dict[str, object]] = []
     for target in targets:
@@ -1931,20 +1890,105 @@ def _build_detail_report_frames(sheets: dict[str, pd.DataFrame]) -> list[tuple[s
             density_rows.append(
                 {
                     "Component": display_name,
-                    "Source worksheets": source_label,
-                    "Block": block,
-                    "GBH Class": row.get("GBH Class"),
-                    "Plot count": plot_count,
-                    "Plot area (ha)": plot_area_ha,
-                    "Sample area (rai)": area_rai,
-                    "Total stems": row.get("Total"),
-                    "Average per plot": row.get("Average per plot"),
-                    "Density per hectare": row.get("Density per hectare"),
-                    "Stems per rai": row.get("Per rai"),
-                    "Calculation": "Total stems ÷ Sample area (rai)",
+                    "Worksheet ต้นทาง": source_label,
+                    "ประเภท": block,
+                    "ช่วง GBH": row.get("GBH Class"),
+                    "จำนวนแปลง": plot_count,
+                    "ขนาดแปลง (ha)": plot_area_ha,
+                    "พื้นที่รวม (ไร่)": area_rai,
+                    "จำนวนต้น": row.get("Total"),
+                    "ต้น/แปลง": row.get("Average per plot"),
+                    "ต้น/ha": row.get("Density per hectare"),
+                    "ต้น/ไร่": row.get("Per rai"),
+                    "สูตร": "จำนวนต้น ÷ พื้นที่รวม (ไร่)",
                 }
             )
     density_trace = pd.DataFrame(density_rows)
+
+    def density_value(component: str, gbh_class: str) -> object:
+        if density_trace.empty:
+            return 0
+        matched = density_trace[
+            density_trace["Component"].astype(str).eq(display_map.get(component, component))
+            & density_trace["ประเภท"].astype(str).str.lower().eq("tree")
+            & density_trace["ช่วง GBH"].astype(str).str.lower().eq(gbh_class.lower())
+        ]
+        return matched.iloc[0]["ต้น/ไร่"] if not matched.empty else 0
+
+    summary_rows: list[dict[str, object]] = []
+    summary_all = sheets.get("SUMMARY_ALL", pd.DataFrame())
+    for target in targets:
+        matched = (
+            summary_all[summary_all["sheet_name"].astype(str) == target]
+            if not summary_all.empty and "sheet_name" in summary_all.columns
+            else pd.DataFrame()
+        )
+        row = matched.iloc[0].to_dict() if not matched.empty else {}
+        tree_detail = get_volume_detail_for_site(target, "Tree", sheets)
+        plot_count = (
+            tree_detail["Plot"].astype(str).str.strip().replace("", np.nan).dropna().nunique()
+            if not tree_detail.empty and "Plot" in tree_detail.columns
+            else 0
+        )
+        area_rai = plot_count * plot_area_ha * rai_per_hectare
+        unmatched = int(row.get("n_unmatched_tree_species", 0) or 0) + int(
+            row.get("n_unmatched_sapling_species", 0) or 0
+        )
+        summary_rows.append(
+            {
+                "Component": display_map.get(target, target),
+                "จำนวนแปลง": plot_count,
+                "พื้นที่ (ไร่)": area_rai,
+                "Tree ทั้งหมด": row.get("n_tree", 0),
+                "GBH 10–30 (ต้น/ไร่)": density_value(target, "GBH 10-30"),
+                "GBH 30–60 (ต้น/ไร่)": density_value(target, "GBH 30-60"),
+                "GBH >60 (ต้น/ไร่)": density_value(target, "GBH > 60"),
+                "ปริมาตร Tree (m³)": row.get("total_tree_volume_m3", 0),
+                "ปริมาตร Sapling (m³)": row.get("total_sapling_volume_m3", 0),
+                "Biomass Tree": row.get("total_tree_biomass", 0),
+                "ชนิดที่ยังไม่ตรง": unmatched,
+                "สถานะ": "พร้อมใช้งาน" if unmatched == 0 else "ควรตรวจสอบชนิดไม้",
+            }
+        )
+    component_summary = pd.DataFrame(summary_rows)
+
+    mapping_rows: list[dict[str, object]] = []
+    raw_mapping = _detail_component_rows(sheets)
+    if not raw_mapping:
+        raw_mapping = [
+            {
+                "Component order": idx,
+                "Component": display_map.get(target, target),
+                "Internal component": target,
+                "Source worksheet": target,
+            }
+            for idx, target in enumerate(targets, start=1)
+        ]
+    raw_volume = sheets.get("DETAIL_VOLUME", pd.DataFrame())
+    for row in raw_mapping:
+        source_sheet = normalize_text(row.get("Source worksheet"))
+        source_tree = raw_volume
+        if not source_tree.empty:
+            source_tree = source_tree[
+                source_tree["sheet_name"].astype(str).eq(source_sheet)
+                & source_tree["block_type"].astype(str).str.lower().eq("tree")
+            ]
+        plot_count = (
+            source_tree["Plot"].astype(str).str.strip().replace("", np.nan).dropna().nunique()
+            if not source_tree.empty and "Plot" in source_tree.columns
+            else 0
+        )
+        mapping_rows.append(
+            {
+                "ลำดับ Component": row.get("Component order"),
+                "Component": row.get("Component"),
+                "Worksheet ต้นทาง": source_sheet,
+                "จำนวนแปลง Tree": plot_count,
+                "ขนาดแปลง (ha)": plot_area_ha,
+                "พื้นที่ตัวอย่าง (ไร่)": plot_count * plot_area_ha * rai_per_hectare,
+            }
+        )
+    mapping = pd.DataFrame(mapping_rows)
 
     def trace_frame(frame_name: str) -> pd.DataFrame:
         frame = sheets.get(frame_name, pd.DataFrame())
@@ -1952,119 +1996,245 @@ def _build_detail_report_frames(sheets: dict[str, pd.DataFrame]) -> list[tuple[s
             return frame.copy()
         result = frame[frame["sheet_name"].astype(str).isin(targets)].copy()
         result.insert(0, "Component", result["sheet_name"].astype(str).map(display_map).fillna(result["sheet_name"]))
-        result.insert(1, "Source worksheets", result["sheet_name"].astype(str).map(
+        result.insert(1, "Worksheet ต้นทาง", result["sheet_name"].astype(str).map(
             {target: _detail_source_sheet_label(target, sheets) for target in targets}
         ))
         return result
 
+    volume_trace = trace_frame("SUMMARY_VOLUME").rename(
+        columns={
+            "sheet_name": "ชื่อกลุ่มภายใน",
+            "block_type": "ประเภท",
+            "n_records": "จำนวนรายการ",
+            "n_matched": "ตรง master",
+            "n_unmatched": "ไม่ตรง master",
+            "total_volume_m3": "ปริมาตรรวม (m³)",
+        }
+    )
+    biomass_trace = trace_frame("SUMMARY_BIOMASS").rename(
+        columns={
+            "sheet_name": "ชื่อกลุ่มภายใน",
+            "forest_type": "ประเภทป่า",
+            "n_tree": "จำนวน Tree",
+            "Ws_sum": "ลำต้น Ws",
+            "Wb_sum": "กิ่ง Wb",
+            "Wl_sum": "ใบ Wl",
+            "Wr_sum": "ราก Wr",
+            "biomass_total_sum": "Biomass รวม",
+        }
+    )
+    ivi_trace = trace_frame("DETAIL_IVI").rename(
+        columns={
+            "sheet_name": "ชื่อกลุ่มภายใน",
+            "Species": "ชนิดไม้",
+            "Number of tree": "จำนวนต้น",
+            "Density (tree/ha)": "ความหนาแน่น (ต้น/ha)",
+            "Density (tree/rai)": "ความหนาแน่น (ต้น/ไร่)",
+        }
+    )
+
     raw_frames: list[tuple[str, str, pd.DataFrame]] = []
     raw_sheet_names = {
-        "DETAIL_TREE_BIOMASS": ("TREE_BIOMASS", "ข้อมูล biomass ระดับต้น"),
-        "DETAIL_VOLUME": ("VOLUME_DETAIL", "ข้อมูลปริมาตรระดับรายการ"),
-        "DETAIL_IVI": ("IVI_DETAIL", "ข้อมูล IVI และ Shannon ระดับชนิด"),
-        "DETAIL_SEEDLING": ("SEEDLING_DETAIL", "ข้อมูลกล้าไม้ระดับรายการ"),
-        "DETAIL_BAMBOO": ("BAMBOO_DETAIL", "ข้อมูลไผ่ระดับรายการ"),
-        "CHECK_UNMATCHED_SPECIES": ("UNMATCHED_SPECIES", "ชนิดไม้ที่ยังจับคู่ master ไม่ได้"),
+        "DETAIL_TREE_BIOMASS": ("ข้อมูล_Biomass_รายต้น", "ข้อมูล Biomass ระดับต้นสำหรับตรวจสอบย้อนกลับ"),
+        "DETAIL_VOLUME": ("ข้อมูลต้นไม้_ไม้หนุ่ม", "ข้อมูล Tree และ Sapling พร้อม GBH และ DBH ที่ใช้คำนวณ"),
+        "DETAIL_IVI": ("ข้อมูล_IVI_รายชนิด", "ข้อมูล IVI และ Shannon ระดับชนิดไม้"),
+        "DETAIL_SEEDLING": ("ข้อมูลกล้าไม้", "ข้อมูลกล้าไม้ระดับรายการ"),
+        "DETAIL_BAMBOO": ("ข้อมูลไผ่", "ข้อมูลไผ่ระดับรายการ"),
+        "CHECK_UNMATCHED_SPECIES": ("ชนิดไม่ตรง", "ชนิดไม้ที่ยังจับคู่กับ species master ไม่ได้"),
+    }
+    raw_column_names = {
+        "sheet_name": "Worksheet",
+        "block_type": "ประเภท",
+        "row_no": "แถวต้นทาง",
+        "No.": "ลำดับ",
+        "Species": "ชนิดไม้",
+        "Species_raw": "ชนิดไม้ (ข้อมูลดิบ)",
+        "Species_norm": "ชนิดไม้ normalized",
+        "thai_standard": "ชื่อไทยมาตรฐาน",
+        "scientific_name": "ชื่อวิทยาศาสตร์",
+        "DBH_cm": "DBH ที่ใช้คำนวณ (ซม.)",
+        "Girth_cm": "GBH (ซม.)",
+        "Height_m": "ความสูง (ม.)",
+        "forest_type_raw": "ประเภทป่า (ข้อมูลดิบ)",
+        "forest_type_clean": "ประเภทป่ามาตรฐาน",
+        "volume_m3": "ปริมาตร (m³)",
+        "matched": "ตรง master",
     }
     for frame_name, (sheet_name, title) in raw_sheet_names.items():
         source_frame = filter_out_component_rows(sheets.get(frame_name, pd.DataFrame()), component_names)
-        raw_frames.append((sheet_name, title, _add_component_column_to_detail(source_frame, sheets)))
+        source_frame = _add_component_column_to_detail(source_frame, sheets).rename(columns=raw_column_names)
+        raw_frames.append((sheet_name, title, source_frame))
 
     formulas = pd.DataFrame(
         [
             {
-                "Output": "GBH class",
-                "Definition": "GBH 10–30: 10 <= Girth_cm < 30; GBH 30–60: 30 <= Girth_cm <= 60; GBH >60: Girth_cm > 60",
-                "Source": "VOLUME_DETAIL.Girth_cm",
+                "ผลลัพธ์": "ช่วง GBH",
+                "นิยาม/สูตร": "GBH 10–30: 10 ≤ GBH < 30; GBH 30–60: 30 ≤ GBH ≤ 60; GBH >60: GBH > 60",
+                "แหล่งข้อมูล": "ข้อมูลต้นไม้_ไม้หนุ่ม → GBH (ซม.)",
             },
             {
-                "Output": "Stems per rai",
-                "Definition": "Total stems / (Plot count × Plot area (ha) × Rai per hectare)",
-                "Source": "GBH_DENSITY_TRACE",
+                "ผลลัพธ์": "จำนวนต้นต่อไร่",
+                "นิยาม/สูตร": "จำนวนต้น ÷ (จำนวนแปลง × ขนาดแปลง (ha) × ไร่ต่อเฮกตาร์)",
+                "แหล่งข้อมูล": "ตรวจสอบความหนาแน่น",
             },
             {
-                "Output": "Component membership",
-                "Definition": "Source worksheet mapped to the user-defined component",
-                "Source": "COMPONENT_MAP",
+                "ผลลัพธ์": "สมาชิก Component",
+                "นิยาม/สูตร": "worksheet ต้นทางถูกจัดเข้ากลุ่มตามค่าที่ผู้ใช้กำหนดบน Product Web",
+                "แหล่งข้อมูล": "ตั้งค่า_กลุ่ม",
             },
             {
-                "Output": "Component volume",
-                "Definition": "Sum of volume_m3 for all source worksheets in the component",
-                "Source": "VOLUME_TRACE and VOLUME_DETAIL",
+                "ผลลัพธ์": "ปริมาตร Component",
+                "นิยาม/สูตร": "ผลรวมปริมาตรของทุกรายการจาก worksheet ที่อยู่ใน Component",
+                "แหล่งข้อมูล": "ตรวจสอบปริมาตร และ ข้อมูลต้นไม้_ไม้หนุ่ม",
             },
             {
-                "Output": "Component biomass",
-                "Definition": "Sum of matched tree biomass parts Ws + Wb + Wl + Wr",
-                "Source": "BIOMASS_TRACE and TREE_BIOMASS",
+                "ผลลัพธ์": "Biomass Component",
+                "นิยาม/สูตร": "ผลรวมส่วนลำต้น กิ่ง ใบ และรากของ Tree ที่เข้าเงื่อนไขคำนวณ",
+                "แหล่งข้อมูล": "ตรวจสอบ_Biomass และ ข้อมูล_Biomass_รายต้น",
             },
         ]
     )
 
     report_frames = [
-        ("README", "คู่มืออ่านไฟล์รายละเอียดและตรวจสอบย้อนกลับ", guide),
-        ("COMPONENT_MAP", "Component และ worksheet ที่เป็นแหล่งข้อมูล", mapping),
-        ("COMPONENT_SUMMARY", "สรุปผลตาม Component", component_summary),
-        ("GBH_DENSITY_TRACE", "ที่มาของความหนาแน่นตามช่วง GBH", density_trace),
-        ("VOLUME_TRACE", "ที่มาของผลรวมปริมาตรตาม Component", trace_frame("SUMMARY_VOLUME")),
-        ("BIOMASS_TRACE", "ที่มาของผลรวม biomass ตาม Component", trace_frame("SUMMARY_BIOMASS")),
-        ("IVI_TRACE", "รายละเอียด IVI / Shannon ตาม Component", trace_frame("DETAIL_IVI")),
+        ("เริ่มต้นอ่านที่นี่", "คู่มือใช้งานไฟล์รายละเอียดผลคำนวณแบบตรวจสอบย้อนกลับได้", guide),
+        ("ตั้งค่า_กลุ่ม", "ตั้งค่า Component และหน่วยพื้นที่ที่ใช้คำนวณ", mapping),
+        ("สรุป_Component", "สรุป Component: ยอดสำหรับอ่านเร็วและจุดเริ่มต้นของการตรวจสอบ", component_summary),
+        ("ตรวจสอบความหนาแน่น", "ตรวจสอบความหนาแน่น: จำนวนต้นต่อไร่ไล่ย้อนกลับได้", density_trace),
+        ("ตรวจสอบปริมาตร", "ตรวจสอบยอดปริมาตรตาม Component และประเภทข้อมูล", volume_trace),
+        ("ตรวจสอบ_Biomass", "ตรวจสอบยอด Biomass ตาม Component และประเภทป่า", biomass_trace),
+        ("ตรวจสอบ_IVI", "ตรวจสอบ IVI และ Shannon ตาม Component", ivi_trace),
         *raw_frames,
-        ("FORMULAS", "สูตร นิยาม และแหล่งข้อมูล", formulas),
+        ("สูตรและนิยาม", "สูตร นิยาม และแหล่งข้อมูลที่ใช้ในรายงาน", formulas),
     ]
     return report_frames
 
 
-def _format_detail_report_worksheet(worksheet, table_index: int) -> None:
+def _format_detail_report_worksheet(worksheet, sheet_index: int) -> None:
     worksheet.sheet_view.showGridLines = False
-    worksheet.sheet_view.zoomScale = 90
+    worksheet.sheet_view.zoomScale = 85
     worksheet.freeze_panes = "A4"
+    worksheet.sheet_properties.tabColor = (
+        DETAIL_TITLE_FILL if sheet_index <= 3 else DETAIL_HEADER_FILL if sheet_index <= 7 else "9DC3E6"
+    )
+    worksheet.page_setup.orientation = "landscape"
+    worksheet.page_setup.fitToWidth = 1
+    worksheet.page_setup.fitToHeight = 0
+    worksheet.sheet_properties.pageSetUpPr.fitToPage = True
+
     max_column = max(worksheet.max_column, 1)
     max_row = max(worksheet.max_row, 1)
     worksheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max_column)
     title_cell = worksheet.cell(1, 1)
     title_cell.fill = PatternFill("solid", fgColor=DETAIL_TITLE_FILL)
     title_cell.font = Font(name=DETAIL_FONT_NAME, size=DETAIL_FONT_SIZE, bold=True, color="FFFFFF")
-    title_cell.alignment = Alignment(vertical="center")
+    title_cell.alignment = Alignment(horizontal="left", vertical="center")
     worksheet.row_dimensions[1].height = 30
+    worksheet.row_dimensions[2].height = 9
 
     header_fill = PatternFill("solid", fgColor=DETAIL_HEADER_FILL)
+    stripe_fill = PatternFill("solid", fgColor=DETAIL_SUBHEADER_FILL)
+    warning_fill = PatternFill("solid", fgColor=DETAIL_WARNING_FILL)
     thin_gray = Side(style="thin", color="D9E2F3")
     for cell in worksheet[3]:
         if cell.value not in (None, ""):
             cell.fill = header_fill
             cell.font = Font(name=DETAIL_FONT_NAME, size=DETAIL_FONT_SIZE, bold=True, color="FFFFFF")
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-            cell.border = Border(bottom=thin_gray)
-    worksheet.row_dimensions[3].height = 28
+            cell.border = Border(top=thin_gray, bottom=thin_gray)
+    worksheet.row_dimensions[3].height = 36
 
-    integer_tokens = ("count", "records", "number", "row_no", "no.", "total stems", "n_", "unmatched")
-    for row in worksheet.iter_rows(min_row=4, max_row=max_row):
+    integer_tokens = (
+        "count",
+        "records",
+        "number",
+        "row_no",
+        "no.",
+        "total stems",
+        "n_",
+        "unmatched",
+        "จำนวน",
+        "ลำดับ",
+        "แถวต้นทาง",
+        "tree ทั้งหมด",
+        "ชนิดที่ยังไม่ตรง",
+    )
+    wrap_tokens = (
+        "component",
+        "worksheet",
+        "source",
+        "definition",
+        "calculation",
+        "คำอธิบาย",
+        "วิธีดู",
+        "สูตร",
+        "นิยาม",
+        "แหล่งข้อมูล",
+        "สถานะ",
+        "ชนิดไม้",
+        "ชื่อวิทยาศาสตร์",
+    )
+    for row_index, row in enumerate(worksheet.iter_rows(min_row=4, max_row=max_row), start=4):
+        row_has_warning = any("ควรตรวจสอบ" in normalize_text(cell.value) for cell in row)
         for cell in row:
             cell.font = Font(name=DETAIL_FONT_NAME, size=DETAIL_FONT_SIZE)
-            cell.alignment = Alignment(vertical="top", wrap_text=False)
+            header = normalize_text(worksheet.cell(3, cell.column).value).lower()
+            should_wrap = any(token in header for token in wrap_tokens)
+            cell.alignment = Alignment(
+                horizontal="right" if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool) else "left",
+                vertical="top",
+                wrap_text=should_wrap,
+            )
+            is_warning_cell = row_has_warning and (
+                "\u0e04\u0e27\u0e23\u0e15\u0e23\u0e27\u0e08\u0e2a\u0e2d\u0e1a"
+                in normalize_text(cell.value)
+                or "status" in header
+                or "\u0e2a\u0e16\u0e32\u0e19\u0e30" in header
+            )
+            if is_warning_cell:
+                cell.fill = warning_fill
+            elif row_index % 2 == 0:
+                cell.fill = stripe_fill
+            cell.border = Border(bottom=thin_gray)
             if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
-                header = normalize_text(worksheet.cell(3, cell.column).value).lower()
-                cell.number_format = "#,##0" if any(token in header for token in integer_tokens) else "#,##0.0000"
+                if any(token in header for token in integer_tokens):
+                    cell.number_format = "#,##0"
+                elif any(token in header for token in ("shannon", "pi", "ivi")):
+                    cell.number_format = "#,##0.000000"
+                elif any(token in header for token in ("พื้นที่", "volume", "ปริมาตร", "biomass", "ต้น/")):
+                    cell.number_format = "#,##0.0000"
+                else:
+                    cell.number_format = "#,##0.00"
+        # TH Sarabun PSK 15 pt needs more vertical room than Excel's default.
+        # Keep wrapped labels and explanations fully visible on first open.
+        worksheet.row_dimensions[row_index].height = 44 if any(cell.alignment.wrap_text for cell in row) else 23
 
     if max_row >= 4 and any(cell.value not in (None, "") for cell in worksheet[3]):
-        table_ref = f"A3:{get_column_letter(max_column)}{max_row}"
-        table = Table(displayName=f"DetailTable{table_index}", ref=table_ref)
-        table.tableStyleInfo = TableStyleInfo(
-            name="TableStyleMedium2",
-            showFirstColumn=False,
-            showLastColumn=False,
-            showRowStripes=True,
-            showColumnStripes=False,
-        )
-        worksheet.add_table(table)
-        worksheet.auto_filter.ref = table_ref
+        # Use one worksheet AutoFilter only. A previous version added both a
+        # native Table filter and a worksheet filter to the same range, which
+        # caused desktop Excel to repair and remove every Table on open.
+        worksheet.auto_filter.ref = f"A3:{get_column_letter(max_column)}{max_row}"
 
-    autofit_worksheet_columns(worksheet)
     for column_index in range(1, max_column + 1):
         letter = get_column_letter(column_index)
-        header = normalize_text(worksheet.cell(3, column_index).value)
-        if any(token in header.lower() for token in ("definition", "calculation", "คำอธิบาย", "source worksheets")):
-            worksheet.column_dimensions[letter].width = min(max(worksheet.column_dimensions[letter].width, 28), 55)
+        header = normalize_text(worksheet.cell(3, column_index).value).lower()
+        if any(token in header for token in ("วิธีดู", "นิยาม", "สูตร", "แหล่งข้อมูล", "source", "worksheet ต้นทาง")):
+            width = 48
+        elif any(token in header for token in ("component", "ชนิดไม้", "ชื่อวิทยาศาสตร์", "สถานะ")):
+            width = 34
+        elif any(token in header for token in ("ช่วง gbh", "ประเภทป่า", "ชื่อกลุ่ม")):
+            width = 22
+        elif any(token in header for token in integer_tokens):
+            width = 15
+        else:
+            width = 18
+        worksheet.column_dimensions[letter].width = width
+
+    if worksheet.title == "เริ่มต้นอ่านที่นี่":
+        worksheet.column_dimensions["A"].width = 30
+        worksheet.column_dimensions["B"].width = 88
+    elif worksheet.title == "สรุป_Component":
+        worksheet.column_dimensions["A"].width = 34
+        worksheet.column_dimensions[get_column_letter(max_column)].width = 28
 
 
 def write_detail_workbook(detail_file: Path, sheets: dict[str, pd.DataFrame]) -> None:
@@ -2072,14 +2242,19 @@ def write_detail_workbook(detail_file: Path, sheets: dict[str, pd.DataFrame]) ->
     with pd.ExcelWriter(detail_file, engine="openpyxl") as writer:
         for sheet_name, title, frame in report_frames:
             safe_frame = frame.copy()
-            if safe_frame.empty and len(safe_frame.columns) == 0:
-                safe_frame = pd.DataFrame({"Status": ["No data available."]})
+            if safe_frame.empty:
+                if len(safe_frame.columns) == 0:
+                    safe_frame = pd.DataFrame({"สถานะ": ["ไม่มีข้อมูล"]})
+                else:
+                    empty_row = {column: None for column in safe_frame.columns}
+                    empty_row[safe_frame.columns[0]] = "ไม่มีข้อมูล"
+                    safe_frame = pd.DataFrame([empty_row], columns=safe_frame.columns)
             safe_frame.to_excel(writer, sheet_name=sheet_name, index=False, startrow=2)
             writer.book[sheet_name].cell(1, 1).value = title
 
     workbook = load_workbook(detail_file)
-    for table_index, (sheet_name, _, _) in enumerate(report_frames, start=1):
-        _format_detail_report_worksheet(workbook[sheet_name], table_index)
+    for sheet_index, (sheet_name, _, _) in enumerate(report_frames, start=1):
+        _format_detail_report_worksheet(workbook[sheet_name], sheet_index)
     workbook.save(detail_file)
 
 
