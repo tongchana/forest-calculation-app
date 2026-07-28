@@ -41,7 +41,7 @@
     const loading = document.querySelector('#loading');
     const state = { manifest: null, sheet: null, images: {}, transforms: {}, selected: null, drag: null, showUI: true, scene: [], history: [], redo: [] };
     const loadImage = (source) => new Promise((resolve, reject) => { const image = new Image(); image.onload = () => resolve(image); image.onerror = reject; image.src = source; });
-    const assetUrl = (file) => `scene-assets/${file}`;
+    const assetUrl = (file) => `/profile-editor/scene-assets/${file}`;
     const transformId = (tree, part) => `${state.sheet.slug}:${tree.id}:${part}`;
     function transformFor(tree, part) { return state.transforms[transformId(tree, part)] ?? (state.transforms[transformId(tree, part)] = { dx: 0, dy: 0, scale: 1, rotate: 0 }); }
     function bounds(tree, part) {
@@ -75,7 +75,7 @@
     document.addEventListener('keydown', (event) => { if (!event.ctrlKey && !event.metaKey) return; const key = event.key.toLowerCase(); const isRedo = key === 'y' || (key === 'z' && event.shiftKey); if (key !== 'z' && key !== 'y') return; event.preventDefault(); const source = isRedo ? state.redo : state.history; const destination = isRedo ? state.history : state.redo; const action = source.pop(); if (!action) return; state.transforms[action.key] = { ...(isRedo ? action.after : action.before) }; destination.push(action); render(); });
     document.querySelector('#export').addEventListener('click', () => { const selected = state.selected; state.showUI = false; render(); const download = document.createElement('a'); download.download = `profile_${state.sheet.slug}_final.jpg`; download.href = canvas.toDataURL('image/jpeg', .98); download.click(); state.showUI = true; state.selected = selected; render(); });
     async function useSheet() { state.sheet = state.manifest.sheets.find((sheet) => sheet.slug === select.value); const files = [state.sheet.base, ...state.sheet.trees.flatMap((tree) => Object.values(tree.parts).filter((part) => part.file).map((part) => `${state.sheet.slug}/${part.file}`))]; await Promise.all(files.map(async (file) => { state.images[file] = await loadImage(assetUrl(file)); })); const base = state.images[state.sheet.base]; canvas.width = base.width; canvas.height = base.height; state.selected = null; loading.hidden = true; render(); }
-    fetch('scene-assets/scene-manifest.json').then((response) => { if (!response.ok) throw new Error('ไม่พบ scene assets'); return response.json(); }).then(async (manifest) => { state.manifest = manifest; for (const sheet of manifest.sheets) select.add(new Option(sheet.name, sheet.slug)); select.addEventListener('change', useSheet); await useSheet(); }).catch((error) => { loading.textContent = `เปิด scene ไม่สำเร็จ: ${error.message}`; });
+    fetch('/profile-editor/scene-assets/scene-manifest.json').then((response) => { if (!response.ok) throw new Error('ไม่พบ scene assets'); return response.json(); }).then(async (manifest) => { state.manifest = manifest; for (const sheet of manifest.sheets) select.add(new Option(sheet.name, sheet.slug)); select.addEventListener('change', useSheet); await useSheet(); }).catch((error) => { loading.textContent = `เปิด scene ไม่สำเร็จ: ${error.message}`; });
   </script>
 </body>
 </html>

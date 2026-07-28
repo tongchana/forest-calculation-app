@@ -335,24 +335,6 @@ export default function ProfilePage() {
               </div>
             </section>
 
-            <section className="rounded-[30px] border border-[#DDE5D5] bg-[#F1F7EE] p-6 shadow-[0_14px_35px_rgba(31,94,59,0.06)] sm:p-7">
-              <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#6A8F5D]">Direct canvas editing</p>
-                  <h2 className="mt-2 text-2xl font-semibold text-[#1F2933]">Refine the first branch and crown in the diagram</h2>
-                  <p className="mt-2 max-w-3xl text-sm leading-7 text-[#55705F]">
-                    Select a crown or first branch directly in the scene, drag it, resize from a corner, rotate the branch, undo with Ctrl+Z, then export a clean JPEG without editor handles.
-                  </p>
-                </div>
-                <a
-                  className="inline-flex shrink-0 items-center justify-center rounded-full bg-[#1F5E3B] px-6 py-3 text-sm font-bold text-white transition hover:-translate-y-0.5"
-                  href="/profile-editor/"
-                >
-                  Open Profile Editor
-                </a>
-              </div>
-            </section>
-
             <SectionCard
               description="Download and use the official profile workbook format before preparing canopy profile data."
               eyebrow="Step 1"
@@ -519,6 +501,25 @@ export default function ProfilePage() {
                 </div>
               ) : (
                 <EmptyState title="No diagrams generated yet" body="Generate profile diagrams to preview one image card per worksheet." />
+              )}
+              {result && (
+                <section className="mt-6 rounded-[28px] border border-[#DDE5D5] bg-[#F1F7EE] p-6">
+                  <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#6A8F5D]">Direct canvas editing</p>
+                      <h3 className="mt-2 text-xl font-semibold text-[#1F2933]">Refine the first branch and crown</h3>
+                      <p className="mt-2 max-w-3xl text-sm leading-7 text-[#55705F]">
+                        Open the editor after reviewing the rendered diagrams. Drag a crown or first branch, resize from a corner, rotate the branch, undo with Ctrl+Z, then export a clean JPEG.
+                      </p>
+                    </div>
+                    <a
+                      className="inline-flex shrink-0 items-center justify-center rounded-full bg-[#1F5E3B] px-6 py-3 text-sm font-bold text-white transition hover:-translate-y-0.5"
+                      href="/profile-editor/"
+                    >
+                      Open Profile Editor
+                    </a>
+                  </div>
+                </section>
               )}
             </SectionCard>
 
