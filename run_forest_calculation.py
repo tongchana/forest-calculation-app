@@ -2596,9 +2596,30 @@ def write_component_summary_workbook(
             carbon_values.append(float(value))
     worksheet.cell(59, 2).value = sum(carbon_values) if carbon_values else None
 
+    apply_component_summary_number_formats(workbook)
     workbook.save(component_file)
     if summary_file and summary_file.exists():
         rewrite_component_ivi_blocks_from_summary_file(component_file, summary_file)
+
+
+def apply_component_summary_number_formats(workbook) -> None:
+    """Format component-export numbers without changing stored precision."""
+    for worksheet in workbook.worksheets:
+        for row in worksheet.iter_rows():
+            for cell in row:
+                if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
+                    cell.number_format = "#,##0.00"
+
+    if not workbook.worksheets:
+        return
+
+    component_sheet = workbook[workbook.sheetnames[0]]
+    for start_row in COMPONENT_IVI_START_ROWS:
+        for row_idx in range(start_row + 2, start_row + 12):
+            for col_idx in range(2, 11):
+                cell = component_sheet.cell(row_idx, col_idx)
+                if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
+                    cell.number_format = "#,##0.000"
 
 
 def rewrite_component_ivi_blocks_from_summary_file(component_file: Path, summary_file: Path) -> None:
@@ -2679,6 +2700,7 @@ def rewrite_component_ivi_blocks_from_summary_file(component_file: Path, summary
             component_sheet.cell(target_row, 10).value = summary_sheet.cell(row_idx, header_map["Shannon contribution"]).value
             target_row += 1
 
+    apply_component_summary_number_formats(component_workbook)
     component_workbook.save(component_file)
 
 

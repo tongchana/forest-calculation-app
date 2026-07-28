@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pandas as pd
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 WEB_APPS_DIR = ROOT_DIR / "web_apps"
@@ -22,6 +22,26 @@ ROOT_CALC_SPEC.loader.exec_module(root_calc)
 
 
 class ForestCalculationLogicTests(unittest.TestCase):
+    def test_component_workbook_uses_two_decimals_except_ivi_shannon_tables(self):
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet["B6"] = 12.3456
+        worksheet["B17"] = 7
+        worksheet["B28"] = 9876.54321
+        first_ivi_data_row = root_calc.COMPONENT_IVI_START_ROWS[0] + 2
+        worksheet.cell(first_ivi_data_row, 2).value = 1.23456
+        worksheet.cell(first_ivi_data_row, 9).value = 2.34567
+        worksheet.cell(first_ivi_data_row, 10).value = 0.12345
+
+        root_calc.apply_component_summary_number_formats(workbook)
+
+        self.assertEqual(worksheet["B6"].number_format, "#,##0.00")
+        self.assertEqual(worksheet["B17"].number_format, "#,##0.00")
+        self.assertEqual(worksheet["B28"].number_format, "#,##0.00")
+        self.assertEqual(worksheet.cell(first_ivi_data_row, 2).number_format, "#,##0.000")
+        self.assertEqual(worksheet.cell(first_ivi_data_row, 9).number_format, "#,##0.000")
+        self.assertEqual(worksheet.cell(first_ivi_data_row, 10).number_format, "#,##0.000")
+
     def test_detail_workbook_supports_many_components_and_uses_th_sarabun_psk(self):
         groups = [
             {
