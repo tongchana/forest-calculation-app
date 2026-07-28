@@ -157,6 +157,19 @@ function downloadFile(file: DownloadPayload, mimeType: string) {
   URL.revokeObjectURL(url);
 }
 
+function normaliseDownloadFilename(value: string, fallback: string) {
+  const cleaned = value.trim().replace(/[<>:"/\\|?*\u0000-\u001F]+/g, "_").replace(/[. ]+$/g, "");
+  const filename = cleaned || fallback;
+  return filename.toLowerCase().endsWith(".xlsx") ? filename : `${filename}.xlsx`;
+}
+
+function renamedDownload(file: DownloadPayload, value: string, fallback: string): DownloadPayload {
+  return {
+    ...file,
+    filename: normaliseDownloadFilename(value, fallback),
+  };
+}
+
 function normaliseGroupPayload(groups: SheetGroup[]) {
   return groups
     .filter((group) => group.name.trim() && group.sheetNames.length > 0)
@@ -224,6 +237,9 @@ export default function Page() {
   const [groups, setGroups] = useState<SheetGroup[]>([]);
   const [economicInputs, setEconomicInputs] = useState<Record<string, EconomicInputState>>({});
   const [result, setResult] = useState<CalculationResponse | null>(null);
+  const [summaryDownloadName, setSummaryDownloadName] = useState("forest_summary.xlsx");
+  const [detailDownloadName, setDetailDownloadName] = useState("forest_details.xlsx");
+  const [componentDownloadName, setComponentDownloadName] = useState("forest_components.xlsx");
   const [busy, setBusy] = useState(false);
   const [inspectBusy, setInspectBusy] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -998,31 +1014,75 @@ export default function Page() {
             </SectionCard>
 
             <SectionCard
-              description="Review summary cards and export report-ready workbooks after the calculation completes."
+              description="Review summary cards, set concise filenames, and export report-ready workbooks. The detail workbook includes every configured component and its trace tables."
               eyebrow="Step 6"
               id="export-outputs"
               title="Export outputs"
             >
               {result ? (
                 <div className="space-y-6">
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <label className="rounded-2xl border border-[#DDE5D5] bg-[#F6F8F4] p-4">
+                      <span className="block text-xs font-bold uppercase tracking-[0.18em] text-[#667085]">Summary filename</span>
+                      <input
+                        className="mt-2 w-full rounded-2xl border border-[#DDE5D5] bg-white px-4 py-3 font-semibold outline-none focus:border-[#1F5E3B]"
+                        value={summaryDownloadName}
+                        onChange={(event) => setSummaryDownloadName(event.target.value)}
+                      />
+                    </label>
+                    <label className="rounded-2xl border border-[#DDE5D5] bg-[#F6F8F4] p-4">
+                      <span className="block text-xs font-bold uppercase tracking-[0.18em] text-[#667085]">Detail filename</span>
+                      <input
+                        className="mt-2 w-full rounded-2xl border border-[#DDE5D5] bg-white px-4 py-3 font-semibold outline-none focus:border-[#1F5E3B]"
+                        value={detailDownloadName}
+                        onChange={(event) => setDetailDownloadName(event.target.value)}
+                      />
+                    </label>
+                    <label className="rounded-2xl border border-[#DDE5D5] bg-[#F6F8F4] p-4">
+                      <span className="block text-xs font-bold uppercase tracking-[0.18em] text-[#667085]">Component filename</span>
+                      <input
+                        className="mt-2 w-full rounded-2xl border border-[#DDE5D5] bg-white px-4 py-3 font-semibold outline-none focus:border-[#1F5E3B]"
+                        value={componentDownloadName}
+                        onChange={(event) => setComponentDownloadName(event.target.value)}
+                      />
+                    </label>
+                  </div>
                   <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                     <DownloadButton
                       disabled={!result.downloads.biomassSummary}
-                      onClick={() => result.downloads.biomassSummary && downloadFile(result.downloads.biomassSummary, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+                      onClick={() =>
+                        result.downloads.biomassSummary &&
+                        downloadFile(
+                          renamedDownload(result.downloads.biomassSummary, summaryDownloadName, "forest_summary.xlsx"),
+                          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
+                      }
                     >
                       Download biomass summary
                     </DownloadButton>
                     <DownloadButton
                       disabled={!result.downloads.biomassDetail}
                       variant="secondary"
-                      onClick={() => result.downloads.biomassDetail && downloadFile(result.downloads.biomassDetail, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+                      onClick={() =>
+                        result.downloads.biomassDetail &&
+                        downloadFile(
+                          renamedDownload(result.downloads.biomassDetail, detailDownloadName, "forest_details.xlsx"),
+                          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
+                      }
                     >
-                      Download biomass detail
+                      Download traceable details
                     </DownloadButton>
                     <DownloadButton
                       disabled={!result.downloads.biomassComponent}
                       variant="secondary"
-                      onClick={() => result.downloads.biomassComponent && downloadFile(result.downloads.biomassComponent, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+                      onClick={() =>
+                        result.downloads.biomassComponent &&
+                        downloadFile(
+                          renamedDownload(result.downloads.biomassComponent, componentDownloadName, "forest_components.xlsx"),
+                          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        )
+                      }
                     >
                       Download grouped biomass
                     </DownloadButton>

@@ -1,0 +1,343 @@
+import math
+import importlib.util
+import sys
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+import pandas as pd
+from openpyxl import load_workbook
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+WEB_APPS_DIR = ROOT_DIR / "web_apps"
+if str(WEB_APPS_DIR) not in sys.path:
+    sys.path.insert(0, str(WEB_APPS_DIR))
+
+import run_forest_calculation as calc
+
+ROOT_CALC_SPEC = importlib.util.spec_from_file_location("root_run_forest_calculation", ROOT_DIR / "run_forest_calculation.py")
+assert ROOT_CALC_SPEC and ROOT_CALC_SPEC.loader
+root_calc = importlib.util.module_from_spec(ROOT_CALC_SPEC)
+ROOT_CALC_SPEC.loader.exec_module(root_calc)
+
+
+class ForestCalculationLogicTests(unittest.TestCase):
+    def test_detail_workbook_supports_many_components_and_uses_th_sarabun_psk(self):
+        groups = [
+            {
+                "name": f"Component {index}",
+                "internal_name": f"component_{index}",
+                "sheet_names": [f"Site {index}"],
+            }
+            for index in range(1, 11)
+        ]
+        summary_all = pd.DataFrame(
+            [
+                {
+                    "sheet_name": group["internal_name"],
+                    "n_tree": 1,
+                    "n_sapling": 0,
+                    "n_seedling_records": 0,
+                    "n_bamboo_records": 0,
+                    "total_tree_biomass": 10.0,
+                    "total_tree_volume_m3": 1.0,
+                    "total_sapling_volume_m3": 0.0,
+                    "shannon_index": 0.0,
+                    "n_unmatched_tree_species": 0,
+                    "n_unmatched_sapling_species": 0,
+                }
+                for group in groups
+            ]
+        )
+        component_volume_rows = [
+            {
+                "sheet_name": group["internal_name"],
+                "block_type": "Tree",
+                "Plot": "P1",
+                "Girth_cm": 40.0,
+                "volume_m3": 1.0,
+                "matched": True,
+            }
+            for group in groups
+        ]
+        source_volume_rows = [
+            {
+                "sheet_name": f"Site {index}",
+                "block_type": "Tree",
+                "Plot": "P1",
+                "Girth_cm": 40.0,
+                "volume_m3": 1.0,
+                "matched": True,
+            }
+            for index in range(1, 11)
+        ]
+        sheets = {
+            "__meta__": {
+                "plot_area_ha": 0.1,
+                "rai_per_hectare": 6.25,
+                "sheet_groups": groups,
+            },
+            "SUMMARY_ALL": summary_all,
+            "SUMMARY_VOLUME": pd.DataFrame(
+                [
+                    {
+                        "sheet_name": group["internal_name"],
+                        "block_type": "Tree",
+                        "n_records": 1,
+                        "n_matched": 1,
+                        "n_unmatched": 0,
+                        "total_volume_m3": 1.0,
+                    }
+                    for group in groups
+                ]
+            ),
+            "SUMMARY_BIOMASS": pd.DataFrame(columns=["sheet_name"]),
+            "DETAIL_TREE_BIOMASS": pd.DataFrame(columns=["sheet_name"]),
+            "DETAIL_VOLUME": pd.DataFrame(component_volume_rows + source_volume_rows),
+            "DETAIL_IVI": pd.DataFrame(columns=["sheet_name"]),
+            "DETAIL_SEEDLING": pd.DataFrame(columns=["sheet_name", "Plot", "Number"]),
+            "DETAIL_BAMBOO": pd.DataFrame(columns=["sheet_name"]),
+            "CHECK_UNMATCHED_SPECIES": pd.DataFrame(columns=["sheet_name"]),
+        }
+
+        with TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "forest_details.xlsx"
+            root_calc.write_detail_workbook(output_path, sheets)
+            workbook = load_workbook(output_path)
+            summary_sheet = workbook["COMPONENT_SUMMARY"]
+            self.assertEqual(summary_sheet.max_row - 3, 10)
+            self.assertEqual(summary_sheet["A1"].font.name, "TH Sarabun PSK")
+            self.assertEqual(summary_sheet["A1"].font.sz, 15)
+            self.assertEqual(summary_sheet["A3"].font.name, "TH Sarabun PSK")
+            self.assertEqual(summary_sheet["A3"].font.sz, 15)
+            self.assertEqual(summary_sheet["A4"].font.name, "TH Sarabun PSK")
+            self.assertEqual(summary_sheet["A4"].font.sz, 15)
+
+    def test_tree_calculations_fall_back_to_gbh_when_dbh_is_blank(self):
+        tree_df = pd.DataFrame(
+            [
+                {
+                    "sheet_name": "SiteA",
+                    "row_no": 3,
+                    "No.": 1,
+                    "Species": "Unknown species",
+                    "DBH (cm)": None,
+                    "Girth (cm)": math.pi * 10,
+                    "Height (m)": 8.0,
+                    "Plot": "P1",
+                    "TQ": 2,
+                    "forest type": next(iter(root_calc.VALID_FORESTS)),
+                }
+            ]
+        )
+
+        biomass, _ = root_calc.build_biomass_outputs(tree_df)
+        volume, _, _ = root_calc.build_volume_outputs(tree_df, pd.DataFrame(), {})
+        ivi, _ = root_calc.build_ivi_outputs(tree_df, plot_area_ha=0.1, rai_per_hectare=6.25)
+
+        self.assertAlmostEqual(float(biomass.loc[0, "DBH_cm"]), 10.0)
+        self.assertAlmostEqual(float(volume.loc[0, "DBH_cm"]), 10.0)
+        self.assertGreater(float(biomass.loc[0, "biomass_total"]), 0)
+        self.assertGreater(float(volume.loc[0, "volume_m3"]), 0)
+        self.assertGreater(float(ivi.loc[0, "BA (m2)"]), 0)
+
+    def test_component_name_can_match_existing_sheet_name(self):
+        groups = calc.normalize_sheet_groups(
+            [{"name": "SiteA", "sheet_names": ["SiteA", "SiteB"]}],
+            ["SiteA", "SiteB"],
+        )
+        self.assertEqual(groups[0]["name"], "SiteA")
+        self.assertNotEqual(groups[0]["internal_name"], "SiteA")
+
+    def test_grouped_records_use_internal_component_name_when_display_name_conflicts(self):
+        frame = pd.DataFrame(
+            [
+                {"sheet_name": "SiteA", "Species": "A"},
+                {"sheet_name": "SiteB", "Species": "B"},
+            ]
+        )
+        groups = calc.normalize_sheet_groups(
+            [{"name": "SiteA", "sheet_names": ["SiteA", "SiteB"]}],
+            ["SiteA", "SiteB"],
+        )
+        grouped = calc.append_grouped_records(frame, groups)
+        internal_name = groups[0]["internal_name"]
+        self.assertEqual(len(grouped[grouped["sheet_name"] == "SiteA"]), 1)
+        self.assertEqual(len(grouped[grouped["sheet_name"] == internal_name]), 2)
+
+    def test_ivi_uses_total_sampled_area_and_correct_frequency(self):
+        rows = [
+            {"sheet_name": "SiteA", "Species": "A", "DBH (cm)": 10.0, "Girth (cm)": None, "Plot": "P1"},
+            {"sheet_name": "SiteA", "Species": "A", "DBH (cm)": 20.0, "Girth (cm)": None, "Plot": "P1"},
+            {"sheet_name": "SiteA", "Species": "A", "DBH (cm)": 10.0, "Girth (cm)": None, "Plot": "P1"},
+            {"sheet_name": "SiteA", "Species": "A", "DBH (cm)": 20.0, "Girth (cm)": None, "Plot": "P2"},
+            {"sheet_name": "SiteA", "Species": "A", "DBH (cm)": 10.0, "Girth (cm)": None, "Plot": "P2"},
+        ]
+        for idx in range(3, 11):
+            rows.append(
+                {
+                    "sheet_name": "SiteA",
+                    "Species": "B",
+                    "DBH (cm)": 10.0,
+                    "Girth (cm)": None,
+                    "Plot": f"P{idx}",
+                }
+            )
+        tree_df = pd.DataFrame(rows)
+
+        detail, summary = calc.build_ivi_outputs(tree_df, plot_area_ha=0.1, rai_per_hectare=6.25)
+        self.assertEqual(int(summary.loc[0, "n_tree"]), 13)
+
+        species_a = detail[detail["Species"] == "A"].iloc[0]
+        expected_density_ha = 5 / (10 * 0.1)
+        expected_density_rai = expected_density_ha / 6.25
+        expected_frequency = 2 / 10 * 100
+
+        ba_expected = sum(math.pi * ((dbh / 100.0) ** 2) / 4.0 for dbh in [10.0, 20.0, 10.0, 20.0, 10.0])
+        dominance_expected = ba_expected / (10 * 0.1)
+
+        self.assertAlmostEqual(species_a["Density (tree/ha)"], expected_density_ha)
+        self.assertAlmostEqual(species_a["Density (tree/rai)"], expected_density_rai)
+        self.assertAlmostEqual(species_a["Frequency"], expected_frequency)
+        self.assertAlmostEqual(species_a["BA (m2)"], ba_expected)
+        self.assertAlmostEqual(species_a["Dominance"], dominance_expected)
+
+        total_density = detail["Density (tree/rai)"].sum()
+        total_frequency = detail["Frequency"].sum()
+        total_dominance = detail["Dominance"].sum()
+        self.assertAlmostEqual(species_a["RDensity"], species_a["Density (tree/rai)"] / total_density * 100)
+        self.assertAlmostEqual(species_a["RFrequency"], species_a["Frequency"] / total_frequency * 100)
+        self.assertAlmostEqual(species_a["RDominance"], species_a["Dominance"] / total_dominance * 100)
+        self.assertAlmostEqual(
+            species_a["IVI"],
+            species_a["RDensity"] + species_a["RFrequency"] + species_a["RDominance"],
+        )
+
+    def test_shannon_formula_unchanged(self):
+        tree_df = pd.DataFrame(
+            [
+                {"sheet_name": "SiteA", "Species": "A", "DBH (cm)": 10.0, "Girth (cm)": None, "Plot": "P1"},
+                {"sheet_name": "SiteA", "Species": "A", "DBH (cm)": 12.0, "Girth (cm)": None, "Plot": "P2"},
+                {"sheet_name": "SiteA", "Species": "B", "DBH (cm)": 14.0, "Girth (cm)": None, "Plot": "P3"},
+            ]
+        )
+        detail, summary = calc.build_ivi_outputs(tree_df, plot_area_ha=0.1, rai_per_hectare=6.25)
+        expected = -(2 / 3) * math.log(2 / 3) - (1 / 3) * math.log(1 / 3)
+        self.assertAlmostEqual(float(summary.loc[0, "Shannon_index"]), expected)
+        self.assertAlmostEqual(float(detail["Shannon contribution"].sum()), expected)
+
+    def test_sapling_volume_ignores_number_and_uses_one_record_per_stem(self):
+        sapling_df = pd.DataFrame(
+            [
+                {
+                    "sheet_name": "SiteA",
+                    "row_no": 3,
+                    "No.": 1,
+                    "Species": "SapA",
+                    "Girth (cm)": 31.4159265359,
+                    "Height (m)": 2.0,
+                    "Number": 5,
+                    "Plot": "P1",
+                    "TQ": None,
+                }
+            ]
+        )
+        detail, summary, _ = calc.build_volume_outputs(
+            tree_df=pd.DataFrame(),
+            sapling_df=sapling_df,
+            ref_map={"sapa": {"thai_standard": "SapA", "scientific_name": None, "group_id": 7}},
+        )
+        per_stem = calc.calculate_volume_from_dbh(10.0, 7)
+        self.assertAlmostEqual(float(detail.loc[0, "volume_m3"]), per_stem)
+        self.assertAlmostEqual(float(summary.loc[0, "total_volume_m3"]), per_stem)
+
+    def test_unmatched_species_fall_back_to_group_7_volume(self):
+        tree_df = pd.DataFrame(
+            [
+                {
+                    "sheet_name": "SiteA",
+                    "row_no": 3,
+                    "No.": 1,
+                    "Species": "Unknown species",
+                    "DBH (cm)": 20.0,
+                    "Girth (cm)": None,
+                    "Height (m)": 8.0,
+                    "Plot": "P1",
+                    "TQ": 2,
+                }
+            ]
+        )
+        detail, summary, unmatched = calc.build_volume_outputs(
+            tree_df=tree_df,
+            sapling_df=pd.DataFrame(),
+            ref_map={},
+        )
+        expected = calc.calculate_volume_from_dbh(20.0, 7)
+        self.assertFalse(bool(detail.loc[0, "matched"]))
+        self.assertEqual(int(detail.loc[0, "group_id"]), 7)
+        self.assertAlmostEqual(float(detail.loc[0, "volume_m3"]), expected)
+        self.assertAlmostEqual(float(summary.loc[0, "total_volume_m3"]), expected)
+        self.assertEqual(len(unmatched), 1)
+
+    def test_build_summary_all_uses_passed_area_values(self):
+        sapling_df = pd.DataFrame(
+            [
+                {"sheet_name": "SiteA", "Plot": "P1", "Number": 10},
+                {"sheet_name": "SiteA", "Plot": "P2", "Number": 10},
+            ]
+        )
+        seedling_df = pd.DataFrame(
+            [
+                {"sheet_name": "SiteA", "Plot": "P1", "Number": 4},
+                {"sheet_name": "SiteA", "Plot": "P2", "Number": 6},
+            ]
+        )
+        summary_all = calc.build_summary_all(
+            tree_df=pd.DataFrame(columns=["sheet_name"]),
+            sapling_df=sapling_df,
+            seedling_df=seedling_df,
+            bamboo_df=pd.DataFrame(columns=["sheet_name", "Culm"]),
+            biomass_summary=pd.DataFrame(columns=["sheet_name", "biomass_total_sum"]),
+            volume_summary=pd.DataFrame(columns=["sheet_name", "block_type", "n_records", "total_volume_m3"]),
+            shannon_summary=pd.DataFrame(columns=["sheet_name", "Shannon_index"]),
+            unmatched_df=pd.DataFrame(columns=["sheet_name", "block_type"]),
+            plot_area_ha=0.2,
+            rai_per_hectare=5.0,
+        )
+        row = summary_all.iloc[0]
+        total_area_rai = 2 * 0.2 * 5.0
+        self.assertAlmostEqual(row["sapling_per_rai"], 2 / total_area_rai)
+        self.assertAlmostEqual(row["seedling_per_rai"], 10 / total_area_rai)
+
+    def test_sapling_dbh_summary_counts_rows_not_number_values(self):
+        sheets = {
+            "DETAIL_VOLUME": pd.DataFrame(
+                [
+                    {
+                        "sheet_name": "SiteA",
+                        "block_type": "Sapling",
+                        "Girth_cm": 20.0,
+                        "Plot": "P1",
+                        "Number": 99,
+                    },
+                    {
+                        "sheet_name": "SiteA",
+                        "block_type": "Sapling",
+                        "Girth_cm": 40.0,
+                        "Plot": "P2",
+                        "Number": None,
+                    },
+                ]
+            ),
+            "DETAIL_SEEDLING": pd.DataFrame(columns=["sheet_name", "Plot", "Number"]),
+        }
+        summary = calc.build_dbh_class_summary("SiteA", sheets, plot_area_ha=0.2, rai_per_hectare=5.0)
+        sapling_rows = summary[summary["Block"] == "Sapling"].reset_index(drop=True)
+
+        self.assertEqual(float(sapling_rows.loc[0, "Total"]), 1.0)
+        self.assertEqual(float(sapling_rows.loc[1, "Total"]), 1.0)
+        self.assertEqual(float(sapling_rows.loc[3, "Total"]), 2.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

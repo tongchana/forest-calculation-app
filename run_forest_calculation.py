@@ -9,7 +9,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 
 
@@ -131,6 +132,12 @@ DETAIL_WORKBOOK_SHEETS = [
     "DETAIL_BAMBOO",
     "CHECK_UNMATCHED_SPECIES",
 ]
+DETAIL_FONT_NAME = "TH Sarabun PSK"
+DETAIL_FONT_SIZE = 15
+DETAIL_TITLE_FILL = "1F4E78"
+DETAIL_HEADER_FILL = "0F766E"
+DETAIL_SUBHEADER_FILL = "DDEBF7"
+DETAIL_WARNING_FILL = "FFF2CC"
 COMPONENT_IVI_START_ROWS = [61, 74, 87, 100, 113, 126, 139]
 
 SUMMARY_SECTION_SPECS = [
@@ -140,7 +147,7 @@ SUMMARY_SECTION_SPECS = [
     ("Shannon Summary", "SUMMARY_SHANNON"),
     ("IVI Summary", "DETAIL_IVI"),
     ("General Tree Stand Summary", None),
-    ("DBH Class Summary", None),
+    ("GBH Class Summary", None),
     ("TQ Volume Summary", None),
 ]
 
@@ -153,7 +160,7 @@ SUMMARY_SECTION_COLORS = {
     "Shannon Summary": "D9EAF7",
     "IVI Summary": "D9EAF7",
     "General Tree Stand Summary": "FFF2CC",
-    "DBH Class Summary": "E2F0D9",
+    "GBH Class Summary": "E2F0D9",
     "TQ Volume Summary": "FCE4D6",
 }
 
@@ -1133,7 +1140,7 @@ def build_dbh_class_summary(
     plot_area_ha: float,
     rai_per_hectare: float,
 ) -> pd.DataFrame:
-    columns = ["Block", "DBH Class", "Total", "Average per plot", "Density per hectare", "Per rai"]
+    columns = ["Block", "GBH Class", "Total", "Average per plot", "Density per hectare", "Per rai"]
     rows: list[dict[str, object]] = []
 
     def append_class_rows(
@@ -1144,8 +1151,8 @@ def build_dbh_class_summary(
         if frame.empty:
             return
 
-        # Use girth-based size classes for this summary table. Keep the existing
-        # output labels so downstream exports and templates continue to work.
+        # GBH is the measured girth/circumference. It is intentionally distinct
+        # from DBH, which is a diameter.
         girth = pd.to_numeric(frame["Girth_cm"], errors="coerce")
         n_plots = frame["Plot"].astype(str).str.strip().replace("", np.nan).dropna().nunique()
         total_area_ha = n_plots * plot_area_ha
@@ -1157,9 +1164,9 @@ def build_dbh_class_summary(
         )
 
         class_specs = [
-            ("dbh 10-30", (girth >= 10) & (girth < 30)),
-            ("dbh 30-60", (girth >= 30) & (girth <= 60)),
-            ("dbh > 60", girth > 60),
+            ("GBH 10-30", (girth >= 10) & (girth < 30)),
+            ("GBH 30-60", (girth >= 30) & (girth <= 60)),
+            ("GBH > 60", girth > 60),
         ]
 
         total_count = 0.0
@@ -1175,7 +1182,7 @@ def build_dbh_class_summary(
             rows.append(
                 {
                     "Block": block_label,
-                    "DBH Class": label,
+                    "GBH Class": label,
                     "Total": n_class,
                     "Average per plot": avg_plot,
                     "Density per hectare": density_ha,
@@ -1190,7 +1197,7 @@ def build_dbh_class_summary(
         rows.append(
             {
                 "Block": block_label,
-                "DBH Class": "Total",
+                "GBH Class": "Total",
                 "Total": total_count,
                 "Average per plot": total_avg_plot if n_plots else "-",
                 "Density per hectare": total_density_ha if total_area_ha else "-",
@@ -1215,7 +1222,7 @@ def build_dbh_class_summary(
         rows.append(
             {
                 "Block": "Seedling",
-                "DBH Class": "count summary",
+                "GBH Class": "count summary",
                 "Total": total_seedling,
                 "Average per plot": safe_divide(total_seedling, n_plots),
                 "Density per hectare": safe_divide(total_seedling, total_area_ha),
@@ -1738,7 +1745,7 @@ def write_summary_by_site_workbook(summary_file: Path, sheets: dict[str, pd.Data
                             plot_area_ha=sheets["__meta__"]["plot_area_ha"],
                             rai_per_hectare=sheets["__meta__"]["rai_per_hectare"],
                         )
-                    elif section_title == "DBH Class Summary":
+                    elif section_title == "GBH Class Summary":
                         filtered = build_dbh_class_summary(
                             source_sheet_name,
                             sheets,
@@ -1763,16 +1770,316 @@ def write_summary_by_site_workbook(summary_file: Path, sheets: dict[str, pd.Data
                 del writer.book["Sheet"]
 
 
-def write_detail_workbook(detail_file: Path, sheets: dict[str, pd.DataFrame]) -> None:
+def _detail_component_rows(sheets: dict[str, pd.DataFrame]) -> list[dict[str, object]]:
+    meta = sheets.get("__meta__", {})
+    raw_groups = meta.get("sheet_groups", []) if isinstance(meta, dict) else []
+    rows: list[dict[str, object]] = []
+    for group_index, group in enumerate(raw_groups, start=1):
+        display_name = normalize_text(group.get("name"))
+        internal_name = normalize_text(group.get("internal_name"))
+        for source_sheet in group.get("sheet_names", []):
+            rows.append(
+                {
+                    "Component order": group_index,
+                    "Component": display_name,
+                    "Internal component": internal_name,
+                    "Source worksheet": normalize_text(source_sheet),
+                }
+            )
+    return rows
+
+
+def _detail_trace_targets(sheets: dict[str, pd.DataFrame]) -> list[str]:
+    component_names = get_component_group_names_in_order(sheets)
+    if component_names:
+        return component_names
+    component_name_set = get_component_sheet_names(sheets)
+    summary_all = sheets.get("SUMMARY_ALL", pd.DataFrame())
+    if summary_all.empty or "sheet_name" not in summary_all.columns:
+        return []
+    return [
+        name
+        for name in dict.fromkeys(summary_all["sheet_name"].dropna().astype(str).tolist())
+        if name not in component_name_set
+    ]
+
+
+def _detail_source_sheet_label(target_name: str, sheets: dict[str, pd.DataFrame]) -> str:
+    meta = sheets.get("__meta__", {})
+    raw_groups = meta.get("sheet_groups", []) if isinstance(meta, dict) else []
+    for group in raw_groups:
+        if normalize_text(group.get("internal_name")) == target_name:
+            return ", ".join(normalize_text(name) for name in group.get("sheet_names", []) if normalize_text(name))
+    return target_name
+
+
+def _add_component_column_to_detail(frame: pd.DataFrame, sheets: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    if frame.empty or "sheet_name" not in frame.columns:
+        return frame.copy()
+    source_to_component: dict[str, str] = {}
+    for row in _detail_component_rows(sheets):
+        source_to_component[normalize_text(row["Source worksheet"])] = normalize_text(row["Component"])
+    result = frame.copy()
+    result.insert(
+        0,
+        "Component",
+        result["sheet_name"].astype(str).map(source_to_component).fillna(result["sheet_name"].astype(str)),
+    )
+    return result
+
+
+def _build_detail_report_frames(sheets: dict[str, pd.DataFrame]) -> list[tuple[str, str, pd.DataFrame]]:
+    meta = sheets.get("__meta__", {})
+    plot_area_ha = float(meta.get("plot_area_ha", PLOT_AREA_HA)) if isinstance(meta, dict) else PLOT_AREA_HA
+    rai_per_hectare = (
+        float(meta.get("rai_per_hectare", RAI_PER_HECTARE)) if isinstance(meta, dict) else RAI_PER_HECTARE
+    )
+    targets = _detail_trace_targets(sheets)
+    display_map = get_component_display_name_map(sheets)
     component_names = get_component_sheet_names(sheets)
+
+    guide = pd.DataFrame(
+        [
+            {
+                "หัวข้อ": "เริ่มตรวจจากที่ใด",
+                "คำอธิบาย": "เริ่มที่ COMPONENT_SUMMARY แล้วใช้ชื่อ Component กรองตาราง trace และตารางข้อมูลดิบ",
+            },
+            {
+                "หัวข้อ": "จำนวนต้นต่อไร่",
+                "คำอธิบาย": "จำนวนต้นในช่วง GBH ÷ (จำนวนแปลง × ขนาดแปลง (ha) × ไร่ต่อเฮกตาร์)",
+            },
+            {
+                "หัวข้อ": "ช่วง GBH",
+                "คำอธิบาย": "ใช้เส้นรอบวงลำต้น (GBH) 10–30, 30–60 และ >60 ซม. ไม่ใช่ DBH",
+            },
+            {
+                "หัวข้อ": "การรองรับหลาย Component",
+                "คำอธิบาย": "ตารางสร้างตาม component metadata แบบ dynamic ไม่มีจำนวน component ตายตัวในไฟล์ detail",
+            },
+            {
+                "หัวข้อ": "ชนิดไม้ไม่ตรง master",
+                "คำอธิบาย": "ตรวจ UNMATCHED_SPECIES ก่อนใช้ผล biomass; ปริมาตรอาจยังคำนวณด้วย fallback group",
+            },
+        ]
+    )
+
+    mapping = pd.DataFrame(
+        _detail_component_rows(sheets),
+        columns=["Component order", "Component", "Internal component", "Source worksheet"],
+    )
+    if mapping.empty:
+        mapping = pd.DataFrame(
+            [
+                {
+                    "Component order": idx,
+                    "Component": target,
+                    "Internal component": target,
+                    "Source worksheet": target,
+                }
+                for idx, target in enumerate(targets, start=1)
+            ]
+        )
+
+    summary_rows: list[dict[str, object]] = []
+    summary_all = sheets.get("SUMMARY_ALL", pd.DataFrame())
+    for target in targets:
+        matched = (
+            summary_all[summary_all["sheet_name"].astype(str) == target]
+            if not summary_all.empty and "sheet_name" in summary_all.columns
+            else pd.DataFrame()
+        )
+        row = matched.iloc[0].to_dict() if not matched.empty else {}
+        summary_rows.append(
+            {
+                "Component": display_map.get(target, target),
+                "Source worksheets": _detail_source_sheet_label(target, sheets),
+                "Tree records": row.get("n_tree", 0),
+                "Sapling records": row.get("n_sapling", 0),
+                "Seedling records": row.get("n_seedling_records", 0),
+                "Bamboo records": row.get("n_bamboo_records", 0),
+                "Tree biomass": row.get("total_tree_biomass", 0),
+                "Tree volume (m3)": row.get("total_tree_volume_m3", 0),
+                "Sapling volume (m3)": row.get("total_sapling_volume_m3", 0),
+                "Shannon index": row.get("shannon_index"),
+                "Unmatched tree species": row.get("n_unmatched_tree_species", 0),
+                "Unmatched sapling species": row.get("n_unmatched_sapling_species", 0),
+            }
+        )
+    component_summary = pd.DataFrame(summary_rows)
+
+    density_rows: list[dict[str, object]] = []
+    for target in targets:
+        display_name = display_map.get(target, target)
+        source_label = _detail_source_sheet_label(target, sheets)
+        frame = build_dbh_class_summary(target, sheets, plot_area_ha, rai_per_hectare)
+        for _, row in frame.iterrows():
+            block = normalize_text(row.get("Block"))
+            if block == "Tree":
+                source_detail = get_volume_detail_for_site(target, "Tree", sheets)
+            elif block == "Sapling":
+                source_detail = get_volume_detail_for_site(target, "Sapling", sheets)
+            else:
+                source_detail = sheets.get("DETAIL_SEEDLING", pd.DataFrame())
+                if not source_detail.empty and "sheet_name" in source_detail.columns:
+                    source_detail = source_detail[source_detail["sheet_name"].astype(str) == target]
+            plot_count = (
+                source_detail["Plot"].astype(str).str.strip().replace("", np.nan).dropna().nunique()
+                if not source_detail.empty and "Plot" in source_detail.columns
+                else 0
+            )
+            area_rai = plot_count * plot_area_ha * rai_per_hectare
+            density_rows.append(
+                {
+                    "Component": display_name,
+                    "Source worksheets": source_label,
+                    "Block": block,
+                    "GBH Class": row.get("GBH Class"),
+                    "Plot count": plot_count,
+                    "Plot area (ha)": plot_area_ha,
+                    "Sample area (rai)": area_rai,
+                    "Total stems": row.get("Total"),
+                    "Average per plot": row.get("Average per plot"),
+                    "Density per hectare": row.get("Density per hectare"),
+                    "Stems per rai": row.get("Per rai"),
+                    "Calculation": "Total stems ÷ Sample area (rai)",
+                }
+            )
+    density_trace = pd.DataFrame(density_rows)
+
+    def trace_frame(frame_name: str) -> pd.DataFrame:
+        frame = sheets.get(frame_name, pd.DataFrame())
+        if frame.empty or "sheet_name" not in frame.columns:
+            return frame.copy()
+        result = frame[frame["sheet_name"].astype(str).isin(targets)].copy()
+        result.insert(0, "Component", result["sheet_name"].astype(str).map(display_map).fillna(result["sheet_name"]))
+        result.insert(1, "Source worksheets", result["sheet_name"].astype(str).map(
+            {target: _detail_source_sheet_label(target, sheets) for target in targets}
+        ))
+        return result
+
+    raw_frames: list[tuple[str, str, pd.DataFrame]] = []
+    raw_sheet_names = {
+        "DETAIL_TREE_BIOMASS": ("TREE_BIOMASS", "ข้อมูล biomass ระดับต้น"),
+        "DETAIL_VOLUME": ("VOLUME_DETAIL", "ข้อมูลปริมาตรระดับรายการ"),
+        "DETAIL_IVI": ("IVI_DETAIL", "ข้อมูล IVI และ Shannon ระดับชนิด"),
+        "DETAIL_SEEDLING": ("SEEDLING_DETAIL", "ข้อมูลกล้าไม้ระดับรายการ"),
+        "DETAIL_BAMBOO": ("BAMBOO_DETAIL", "ข้อมูลไผ่ระดับรายการ"),
+        "CHECK_UNMATCHED_SPECIES": ("UNMATCHED_SPECIES", "ชนิดไม้ที่ยังจับคู่ master ไม่ได้"),
+    }
+    for frame_name, (sheet_name, title) in raw_sheet_names.items():
+        source_frame = filter_out_component_rows(sheets.get(frame_name, pd.DataFrame()), component_names)
+        raw_frames.append((sheet_name, title, _add_component_column_to_detail(source_frame, sheets)))
+
+    formulas = pd.DataFrame(
+        [
+            {
+                "Output": "GBH class",
+                "Definition": "GBH 10–30: 10 <= Girth_cm < 30; GBH 30–60: 30 <= Girth_cm <= 60; GBH >60: Girth_cm > 60",
+                "Source": "VOLUME_DETAIL.Girth_cm",
+            },
+            {
+                "Output": "Stems per rai",
+                "Definition": "Total stems / (Plot count × Plot area (ha) × Rai per hectare)",
+                "Source": "GBH_DENSITY_TRACE",
+            },
+            {
+                "Output": "Component membership",
+                "Definition": "Source worksheet mapped to the user-defined component",
+                "Source": "COMPONENT_MAP",
+            },
+            {
+                "Output": "Component volume",
+                "Definition": "Sum of volume_m3 for all source worksheets in the component",
+                "Source": "VOLUME_TRACE and VOLUME_DETAIL",
+            },
+            {
+                "Output": "Component biomass",
+                "Definition": "Sum of matched tree biomass parts Ws + Wb + Wl + Wr",
+                "Source": "BIOMASS_TRACE and TREE_BIOMASS",
+            },
+        ]
+    )
+
+    report_frames = [
+        ("README", "คู่มืออ่านไฟล์รายละเอียดและตรวจสอบย้อนกลับ", guide),
+        ("COMPONENT_MAP", "Component และ worksheet ที่เป็นแหล่งข้อมูล", mapping),
+        ("COMPONENT_SUMMARY", "สรุปผลตาม Component", component_summary),
+        ("GBH_DENSITY_TRACE", "ที่มาของความหนาแน่นตามช่วง GBH", density_trace),
+        ("VOLUME_TRACE", "ที่มาของผลรวมปริมาตรตาม Component", trace_frame("SUMMARY_VOLUME")),
+        ("BIOMASS_TRACE", "ที่มาของผลรวม biomass ตาม Component", trace_frame("SUMMARY_BIOMASS")),
+        ("IVI_TRACE", "รายละเอียด IVI / Shannon ตาม Component", trace_frame("DETAIL_IVI")),
+        *raw_frames,
+        ("FORMULAS", "สูตร นิยาม และแหล่งข้อมูล", formulas),
+    ]
+    return report_frames
+
+
+def _format_detail_report_worksheet(worksheet, table_index: int) -> None:
+    worksheet.sheet_view.showGridLines = False
+    worksheet.sheet_view.zoomScale = 90
+    worksheet.freeze_panes = "A4"
+    max_column = max(worksheet.max_column, 1)
+    max_row = max(worksheet.max_row, 1)
+    worksheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max_column)
+    title_cell = worksheet.cell(1, 1)
+    title_cell.fill = PatternFill("solid", fgColor=DETAIL_TITLE_FILL)
+    title_cell.font = Font(name=DETAIL_FONT_NAME, size=DETAIL_FONT_SIZE, bold=True, color="FFFFFF")
+    title_cell.alignment = Alignment(vertical="center")
+    worksheet.row_dimensions[1].height = 30
+
+    header_fill = PatternFill("solid", fgColor=DETAIL_HEADER_FILL)
+    thin_gray = Side(style="thin", color="D9E2F3")
+    for cell in worksheet[3]:
+        if cell.value not in (None, ""):
+            cell.fill = header_fill
+            cell.font = Font(name=DETAIL_FONT_NAME, size=DETAIL_FONT_SIZE, bold=True, color="FFFFFF")
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = Border(bottom=thin_gray)
+    worksheet.row_dimensions[3].height = 28
+
+    integer_tokens = ("count", "records", "number", "row_no", "no.", "total stems", "n_", "unmatched")
+    for row in worksheet.iter_rows(min_row=4, max_row=max_row):
+        for cell in row:
+            cell.font = Font(name=DETAIL_FONT_NAME, size=DETAIL_FONT_SIZE)
+            cell.alignment = Alignment(vertical="top", wrap_text=False)
+            if isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
+                header = normalize_text(worksheet.cell(3, cell.column).value).lower()
+                cell.number_format = "#,##0" if any(token in header for token in integer_tokens) else "#,##0.0000"
+
+    if max_row >= 4 and any(cell.value not in (None, "") for cell in worksheet[3]):
+        table_ref = f"A3:{get_column_letter(max_column)}{max_row}"
+        table = Table(displayName=f"DetailTable{table_index}", ref=table_ref)
+        table.tableStyleInfo = TableStyleInfo(
+            name="TableStyleMedium2",
+            showFirstColumn=False,
+            showLastColumn=False,
+            showRowStripes=True,
+            showColumnStripes=False,
+        )
+        worksheet.add_table(table)
+        worksheet.auto_filter.ref = table_ref
+
+    autofit_worksheet_columns(worksheet)
+    for column_index in range(1, max_column + 1):
+        letter = get_column_letter(column_index)
+        header = normalize_text(worksheet.cell(3, column_index).value)
+        if any(token in header.lower() for token in ("definition", "calculation", "คำอธิบาย", "source worksheets")):
+            worksheet.column_dimensions[letter].width = min(max(worksheet.column_dimensions[letter].width, 28), 55)
+
+
+def write_detail_workbook(detail_file: Path, sheets: dict[str, pd.DataFrame]) -> None:
+    report_frames = _build_detail_report_frames(sheets)
     with pd.ExcelWriter(detail_file, engine="openpyxl") as writer:
-        for sheet_name in DETAIL_WORKBOOK_SHEETS:
-            frame = filter_out_component_rows(sheets[sheet_name], component_names)
-            frame.to_excel(writer, sheet_name=sheet_name, index=False)
+        for sheet_name, title, frame in report_frames:
+            safe_frame = frame.copy()
+            if safe_frame.empty and len(safe_frame.columns) == 0:
+                safe_frame = pd.DataFrame({"Status": ["No data available."]})
+            safe_frame.to_excel(writer, sheet_name=sheet_name, index=False, startrow=2)
+            writer.book[sheet_name].cell(1, 1).value = title
 
     workbook = load_workbook(detail_file)
-    for sheet_name in DETAIL_WORKBOOK_SHEETS:
-        format_detail_worksheet(workbook[sheet_name])
+    for table_index, (sheet_name, _, _) in enumerate(report_frames, start=1):
+        _format_detail_report_worksheet(workbook[sheet_name], table_index)
     workbook.save(detail_file)
 
 
@@ -1837,7 +2144,7 @@ def write_component_summary_workbook(
         if frame.empty:
             return result
         for _, row in frame.iterrows():
-            result[(normalize_text(row["Block"]).lower(), normalize_text(row["DBH Class"]).lower())] = row["Per rai"]
+            result[(normalize_text(row["Block"]).lower(), normalize_text(row["GBH Class"]).lower())] = row["Per rai"]
         return result
 
     def tq_summary_map(component_name: str) -> dict[str, object]:
@@ -2039,9 +2346,9 @@ def write_component_summary_workbook(
 
         worksheet.cell(density_row, 1).value = display_name
         worksheet.cell(density_row, 2).value = species_count_from_tree(component_name)
-        worksheet.cell(density_row, 3).value = density_map.get(("tree", "dbh 10-30"))
-        worksheet.cell(density_row, 4).value = density_map.get(("tree", "dbh 30-60"))
-        worksheet.cell(density_row, 5).value = density_map.get(("tree", "dbh > 60"))
+        worksheet.cell(density_row, 3).value = density_map.get(("tree", "gbh 10-30"))
+        worksheet.cell(density_row, 4).value = density_map.get(("tree", "gbh 30-60"))
+        worksheet.cell(density_row, 5).value = density_map.get(("tree", "gbh > 60"))
         worksheet.cell(density_row, 6).value = density_map.get(("tree", "total"))
         worksheet.cell(density_row, 7).value = species_count_from_sapling(component_name)
         worksheet.cell(density_row, 8).value = block_density_per_rai(component_name, "sapling")
