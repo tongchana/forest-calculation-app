@@ -3,6 +3,7 @@
 import * as XLSX from "xlsx";
 import { PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { readWorkspace } from "@/app/lib/workspace-session";
+import { readWorkspaceFile } from "@/app/lib/workspace-file";
 
 type ProfileWorkspace = { workbookFile: File | null };
 type Tree = { id: number; species: string; height: number; firstBranch: number; x: number; y: number; crownXPlus: number; crownXMinus: number; crownYPlus: number; crownYMinus: number };
@@ -36,6 +37,8 @@ function finite(value: number, fallback: number) { return Number.isFinite(value)
 
 export default function ProfileEditorPage() {
   const workspace = readWorkspace<ProfileWorkspace>("profile");
+  const [workbookFile, setWorkbookFile] = useState<File | null>(workspace?.workbookFile ?? null);
+  const [fileLookupComplete, setFileLookupComplete] = useState(Boolean(workspace?.workbookFile));
   const [sheets, setSheets] = useState<ProfileSheet[]>([]);
   const [sheetIndex, setSheetIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -45,9 +48,12 @@ export default function ProfileEditorPage() {
   const svgRef = useRef<SVGSVGElement | null>(null);
 
   useEffect(() => {
-    if (!workspace?.workbookFile) return;
-    void readProfileWorkbook(workspace.workbookFile).then(setSheets).catch(() => setError("Unable to read the current profile workbook."));
-  }, [workspace?.workbookFile]);
+    if (workbookFile) {
+      void readProfileWorkbook(workbookFile).then(setSheets).catch(() => setError("Unable to read the current profile workbook."));
+      return;
+    }
+    void readWorkspaceFile("profile").then((file) => { setWorkbookFile(file); setFileLookupComplete(true); }).catch(() => { setError("Unable to load the current profile workbook."); setFileLookupComplete(true); });
+  }, [workbookFile]);
 
   const sheet = sheets[sheetIndex];
   const speciesColors = useMemo(() => {
@@ -87,7 +93,11 @@ export default function ProfileEditorPage() {
     image.src = URL.createObjectURL(new Blob([xml], { type: "image/svg+xml;charset=utf-8" }));
   }
 
-  if (!workspace?.workbookFile) {
+  if (!workbookFile && !fileLookupComplete && !error) {
+    return <main className="min-h-screen bg-[#F6F8F4] p-6 text-[#1F2933]"><div className="mx-auto max-w-2xl rounded-[30px] border border-[#DDE5D5] bg-white p-8 shadow-sm"><h1 className="text-3xl font-semibold">Profile Editor</h1><p className="mt-4 leading-7 text-[#667085]">Loading the current profile workbook…</p></div></main>;
+  }
+
+  if (!workbookFile) {
     return <main className="min-h-screen bg-[#F6F8F4] p-6 text-[#1F2933]"><div className="mx-auto max-w-2xl rounded-[30px] border border-[#DDE5D5] bg-white p-8 shadow-sm"><h1 className="text-3xl font-semibold">Profile Editor</h1><p className="mt-4 leading-7 text-[#667085]">Upload and generate a profile first, then open the editor from the Profile Studio. The editor will use that workbook only.</p><a className="mt-6 inline-flex rounded-full bg-[#1F5E3B] px-5 py-3 font-semibold text-white" href="/profile">Go to Profile Studio</a></div></main>;
   }
 

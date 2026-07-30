@@ -3,6 +3,7 @@
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL, describeApiError } from "@/app/lib/api-base";
 import { clearWorkspace, readWorkspace, saveWorkspace } from "@/app/lib/workspace-session";
+import { saveWorkspaceFile } from "@/app/lib/workspace-file";
 import {
   AppHeader,
   DownloadButton,
@@ -227,6 +228,7 @@ export default function ProfilePage() {
       return;
     }
     setWorkbookFile(file);
+    void saveWorkspaceFile("profile", file);
     setResult(null);
     setError(null);
     setMessage(null);
@@ -240,6 +242,7 @@ export default function ProfilePage() {
   function clearCurrentWorkspace() {
     if (!window.confirm("Clear the uploaded workbook and rendered profile outputs from this Profile workspace?")) return;
     clearWorkspace("profile");
+    void saveWorkspaceFile("profile", null);
     setWorkbookFile(null);
     setSheetNames([]);
     setResult(null);
