@@ -4,7 +4,7 @@ import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "re
 import * as XLSX from "xlsx";
 import { API_BASE_URL, describeApiError } from "@/app/lib/api-base";
 import { clearWorkspace, readWorkspace, saveWorkspace } from "@/app/lib/workspace-session";
-import { saveProfileEditorScene, saveWorkspaceFile, type ProfileEditorScene, type ProfileEditorTree } from "@/app/lib/workspace-file";
+import { readWorkspaceFile, saveProfileEditorScene, saveWorkspaceFile, type ProfileEditorScene, type ProfileEditorTree } from "@/app/lib/workspace-file";
 import {
   AppHeader,
   DownloadButton,
@@ -128,6 +128,15 @@ export default function ProfilePage() {
   useEffect(() => {
     saveWorkspace<ProfileWorkspaceState>("profile", { workbookFile, sheetNames, result, renderMode, message, error });
   }, [workbookFile, sheetNames, result, renderMode, message, error]);
+
+  useEffect(() => {
+    if (workbookFile) return;
+    void readWorkspaceFile("profile").then((file) => {
+      if (!file) return;
+      setWorkbookFile(file);
+      void inspectWorkbook(file);
+    });
+  }, []);
 
   useEffect(() => {
     const sections = profileSectionIds
