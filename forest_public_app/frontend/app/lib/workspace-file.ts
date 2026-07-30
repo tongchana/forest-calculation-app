@@ -21,6 +21,7 @@ export type ProfileEditorScene = {
 };
 
 const PROFILE_EDITOR_SCENE_KEY = "profile-editor-scene";
+const PROFILE_EDITOR_RENDER_KEY = "profile-editor-render";
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -73,4 +74,12 @@ export async function readProfileEditorScene(): Promise<ProfileEditorScene | nul
   });
   database.close();
   return value;
+}
+
+export type ProfileEditorRender = { sheetName: string; imageDataUrl: string }[];
+
+export async function saveProfileEditorRender(render: ProfileEditorRender | null) {
+  const database = await openDatabase();
+  await new Promise<void>((resolve, reject) => { const transaction = database.transaction(STORE_NAME, "readwrite"); transaction.objectStore(STORE_NAME).put(render, PROFILE_EDITOR_RENDER_KEY); transaction.oncomplete = () => resolve(); transaction.onerror = () => reject(transaction.error); });
+  database.close();
 }

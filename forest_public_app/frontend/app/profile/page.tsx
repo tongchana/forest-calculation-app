@@ -4,7 +4,7 @@ import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "re
 import * as XLSX from "xlsx";
 import { API_BASE_URL, describeApiError } from "@/app/lib/api-base";
 import { clearWorkspace, readWorkspace, saveWorkspace } from "@/app/lib/workspace-session";
-import { readProfileEditorScene, readWorkspaceFile, saveProfileEditorScene, saveWorkspaceFile, type ProfileEditorScene, type ProfileEditorTree } from "@/app/lib/workspace-file";
+import { readProfileEditorScene, readWorkspaceFile, saveProfileEditorRender, saveProfileEditorScene, saveWorkspaceFile, type ProfileEditorScene, type ProfileEditorTree } from "@/app/lib/workspace-file";
 import {
   AppHeader,
   DownloadButton,
@@ -265,6 +265,7 @@ export default function ProfilePage() {
     }
     setWorkbookFile(file);
     void saveWorkspaceFile("profile", file);
+    void saveProfileEditorRender(null);
     if (file) void buildProfileEditorScene(file).then((scene) => saveProfileEditorScene(scene)).catch(() => saveProfileEditorScene(null));
     else void saveProfileEditorScene(null);
     setResult(null);
@@ -282,6 +283,7 @@ export default function ProfilePage() {
     clearWorkspace("profile");
     void saveWorkspaceFile("profile", null);
     void saveProfileEditorScene(null);
+    void saveProfileEditorRender(null);
     setWorkbookFile(null);
     setSheetNames([]);
     setResult(null);
@@ -347,6 +349,7 @@ export default function ProfilePage() {
       }
       const data = (await response.json()) as ProfileResponse;
       setResult(data);
+      if (data.renderMode === "realistic") void saveProfileEditorRender(data.images.map((image) => ({ sheetName: image.sheetName, imageDataUrl: `data:image/png;base64,${image.contentBase64}` })));
       const auditSummary = data.validation
         .map((sheet) => `${sheet.sheetName}: ${sheet.treeCount} trees, ${sheet.speciesCount} species`)
         .join(" | ");
