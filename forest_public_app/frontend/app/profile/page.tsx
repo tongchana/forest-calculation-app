@@ -1,9 +1,10 @@
 "use client";
 
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import { API_BASE_URL, describeApiError } from "@/app/lib/api-base";
 import { clearWorkspace, readWorkspace, saveWorkspace } from "@/app/lib/workspace-session";
-import { saveWorkspaceFile } from "@/app/lib/workspace-file";
+import { saveProfileEditorScene, saveWorkspaceFile, type ProfileEditorScene, type ProfileEditorTree } from "@/app/lib/workspace-file";
 import {
   AppHeader,
   DownloadButton,
@@ -87,6 +88,27 @@ function fileSize(file: File | null) {
     return "No file";
   }
   return `${(file.size / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function profileNumber(value: unknown, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+async function buildProfileEditorScene(file: File): Promise<ProfileEditorScene> {
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+  const sheets = workbook.SheetNames.map((name, sheetIndex) => {
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[name], { header: 1, blankrows: false, defval: null });
+    const trees: ProfileEditorTree[] = rows.slice(2).flatMap((row, rowIndex) => {
+      const species = String(row[1] ?? "").trim();
+      const x = profileNumber(row[5], NaN), y = profileNumber(row[6], NaN), height = profileNumber(row[3], NaN);
+      if (!species || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(height)) return [];
+      return [{ id: profileNumber(row[0], rowIndex + 1), species, x, y, height, firstBranch: profileNumber(row[4], height * .55), crownXPlus: Math.max(.5, profileNumber(row[7], 1.5)), crownXMinus: Math.max(.5, profileNumber(row[8], 1.5)), crownYPlus: Math.max(.5, profileNumber(row[9], 1.5)), crownYMinus: Math.max(.5, profileNumber(row[10], 1.5)) }];
+    });
+    return { name, slug: `upload-${sheetIndex + 1}`, trees };
+  }).filter((sheet) => sheet.trees.length > 0);
+  if (!sheets.length) throw new Error("No usable profile rows were found for the editor.");
+  return { version: 1, fileName: file.name, sheets };
 }
 
 export default function ProfilePage() {
@@ -229,6 +251,8 @@ export default function ProfilePage() {
     }
     setWorkbookFile(file);
     void saveWorkspaceFile("profile", file);
+    if (file) void buildProfileEditorScene(file).then((scene) => saveProfileEditorScene(scene)).catch(() => saveProfileEditorScene(null));
+    else void saveProfileEditorScene(null);
     setResult(null);
     setError(null);
     setMessage(null);
@@ -243,6 +267,7 @@ export default function ProfilePage() {
     if (!window.confirm("Clear the uploaded workbook and rendered profile outputs from this Profile workspace?")) return;
     clearWorkspace("profile");
     void saveWorkspaceFile("profile", null);
+    void saveProfileEditorScene(null);
     setWorkbookFile(null);
     setSheetNames([]);
     setResult(null);
