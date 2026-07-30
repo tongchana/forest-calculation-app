@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -77,6 +78,7 @@ def remove_checkerboard_background(rgba: np.ndarray) -> np.ndarray:
     return crop_rgba_to_alpha_bbox(cleaned)
 
 
+@lru_cache(maxsize=1)
 def load_branch_assets() -> list[SpriteAsset]:
     candidates = [
         path
@@ -139,6 +141,7 @@ def build_asset(name: str, rgba: np.ndarray) -> SpriteAsset:
     )
 
 
+@lru_cache(maxsize=1)
 def load_assets() -> tuple[list[SpriteAsset], list[SpriteAsset]]:
     # Discover transparent sprites by geometry, not by file name. This keeps new
     # crown/trunk exports usable even when they retain their original image names.
