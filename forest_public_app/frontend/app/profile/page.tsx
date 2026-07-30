@@ -49,10 +49,18 @@ type ProfileResponse = {
   download: DownloadPayload;
 };
 
+type ProfileJobResult = {
+  sheetNames: string[];
+  renderMode: RenderMode;
+  images: Array<{ sheetName: string; filename: string; file: string }>;
+  validation: ProfileSheetValidation[];
+  download: { filename: string; file: string };
+};
+
 type ProfileGenerationJob = {
   status: "queued" | "rendering" | "preparing_editor" | "ready" | "failed";
   detail?: string;
-  profile?: ProfileResponse;
+  profile?: ProfileJobResult;
   editorScene?: ProfileEditorServerScene;
 };
 
@@ -95,6 +103,30 @@ function fileSize(file: File | null) {
     return "No file";
   }
   return `${(file.size / 1024 / 1024).toFixed(2)} MB`;
+}
+
+async function blobToBase64(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",", 2)[1] ?? "");
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function fetchWithRetries(url: string, attempts = 4) {
+  let lastError: unknown = new Error("Request failed.");
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetch(url, { cache: "no-store" });
+      if (response.ok || response.status < 500) return response;
+      lastError = new Error(`Request failed with status ${response.status}.`);
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+  }
+  throw lastError;
 }
 
 function profileNumber(value: unknown, fallback = 0) {
@@ -369,7 +401,7 @@ export default function ProfilePage() {
       let previousStatus = "";
       for (let attempt = 0; attempt < 450; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
-        const jobResponse = await fetch(`${API_BASE_URL}/api/profile/generation-job/${startedJob.jobId}`, { cache: "no-store" });
+        const jobResponse = await fetchWithRetries(`${API_BASE_URL}/api/profile/generation-job/${startedJob.jobId}`);
         if (!jobResponse.ok) {
           const jobError = await jobResponse.json().catch(() => ({ detail: "Could not read profile generation status." }));
           throw new Error(jobError.detail ?? "Could not read profile generation status.");
@@ -387,7 +419,28 @@ export default function ProfilePage() {
       if (!job || job.status !== "ready" || !job.profile || !job.editorScene) {
         throw new Error("Profile generation timed out.");
       }
-      const data = job.profile;
+      const profileManifest = job.profile;
+      const images = await Promise.all(profileManifest.images.map(async (image) => {
+        const imageResponse = await fetchWithRetries(image.file);
+        if (!imageResponse.ok) throw new Error("Could not download a rendered profile image.");
+        return {
+          sheetName: image.sheetName,
+          filename: image.filename,
+          contentBase64: await blobToBase64(await imageResponse.blob()),
+        };
+      }));
+      const downloadResponse = await fetchWithRetries(profileManifest.download.file);
+      if (!downloadResponse.ok) throw new Error("Could not download the rendered profile package.");
+      const data: ProfileResponse = {
+        sheetNames: profileManifest.sheetNames,
+        renderMode: profileManifest.renderMode,
+        images,
+        validation: profileManifest.validation,
+        download: {
+          filename: profileManifest.download.filename,
+          contentBase64: await blobToBase64(await downloadResponse.blob()),
+        },
+      };
       setResult(data);
       const scene = job.editorScene;
       const assetDataUrls = new Map<string, string>();
@@ -396,7 +449,7 @@ export default function ProfilePage() {
         ...scene.sheets.flatMap((sheet) => sheet.trees.flatMap((tree) => Object.values(tree.parts).map((part) => part.file))),
       ];
       await Promise.all([...new Set(assetUrls)].map(async (assetUrl) => {
-        const assetResponse = await fetch(assetUrl);
+        const assetResponse = await fetchWithRetries(assetUrl);
         if (!assetResponse.ok) throw new Error("Could not download an editable profile layer.");
         const blob = await assetResponse.blob();
         const dataUrl = await new Promise<string>((resolve, reject) => {

@@ -964,14 +964,40 @@ def run_profile_generation_job(job_id: str, file_name: str, file_bytes: bytes, r
             with PROFILE_GENERATION_JOB_LOCK:
                 PROFILE_GENERATION_JOBS[job_id]["status"] = "rendering"
             profile_result = build_profile_calculation_response(file_name, file_bytes, render_mode)
+            result_assets: dict[str, tuple[bytes, str]] = {}
+            image_manifest: list[dict[str, str]] = []
+            for image_index, image in enumerate(profile_result["images"]):
+                asset_key = f"profile-image-{image_index}.png"
+                result_assets[asset_key] = (base64.b64decode(image["contentBase64"]), "image/png")
+                image_manifest.append({
+                    "sheetName": image["sheetName"],
+                    "filename": image["filename"],
+                    "file": f"/api/profile/generation-job/{job_id}/asset/{asset_key}",
+                })
+            download_asset_key = "profile-output.zip"
+            result_assets[download_asset_key] = (
+                base64.b64decode(profile_result["download"]["contentBase64"]),
+                "application/zip",
+            )
+            profile_manifest = {
+                "sheetNames": profile_result["sheetNames"],
+                "renderMode": profile_result["renderMode"],
+                "images": image_manifest,
+                "validation": profile_result["validation"],
+                "download": {
+                    "filename": profile_result["download"]["filename"],
+                    "file": f"/api/profile/generation-job/{job_id}/asset/{download_asset_key}",
+                },
+            }
             with PROFILE_GENERATION_JOB_LOCK:
                 PROFILE_GENERATION_JOBS[job_id]["status"] = "preparing_editor"
             editor_scene = build_profile_editor_scene_manifest(file_name, file_bytes)
         with PROFILE_GENERATION_JOB_LOCK:
             PROFILE_GENERATION_JOBS[job_id].update({
                 "status": "ready",
-                "profile": profile_result,
+                "profile": profile_manifest,
                 "editorScene": editor_scene,
+                "resultAssets": result_assets,
                 "finishedAt": time.time(),
             })
     except Exception as exc:  # noqa: BLE001
@@ -1013,4 +1039,15 @@ def get_profile_generation_job(job_id: str) -> dict[str, Any]:
         job = PROFILE_GENERATION_JOBS.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Profile generation job expired or was not found.")
-        return dict(job)
+        return {key: value for key, value in job.items() if key != "resultAssets"}
+
+
+@app.get("/api/profile/generation-job/{job_id}/asset/{asset_key}")
+def get_profile_generation_asset(job_id: str, asset_key: str) -> Response:
+    with PROFILE_GENERATION_JOB_LOCK:
+        job = PROFILE_GENERATION_JOBS.get(job_id)
+        asset = job.get("resultAssets", {}).get(asset_key) if job else None
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Profile generation asset expired or was not found.")
+    content, media_type = asset
+    return Response(content=content, media_type=media_type, headers={"Cache-Control": "private, max-age=3600"})
