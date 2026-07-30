@@ -445,7 +445,6 @@ export default function ProfilePage() {
           contentBase64: await blobToBase64(await downloadResponse.blob()),
         },
       };
-      setResult(data);
       const scene = job.editorScene;
       setMessage("Downloading editable profile layers…");
       const bundleResponse = await fetchWithRetries(`${API_BASE_URL}/api/profile/generation-job/${startedJob.jobId}/editor-bundle`);
@@ -482,6 +481,7 @@ export default function ProfilePage() {
       await saveProfileEditorServerScene(persistentScene);
       await saveProfileEditorRender(null);
       await saveProfileResult(data);
+      setResult(data);
       const auditSummary = data.validation
         .map((sheet) => `${sheet.sheetName}: ${sheet.treeCount} trees, ${sheet.speciesCount} species`)
         .join(" | ");
