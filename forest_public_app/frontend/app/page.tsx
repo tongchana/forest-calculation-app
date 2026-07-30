@@ -2,6 +2,7 @@
 
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL, describeApiError } from "@/app/lib/api-base";
+import { clearWorkspace, readWorkspace, saveWorkspace } from "@/app/lib/workspace-session";
 import {
   AppHeader,
   DownloadButton,
@@ -133,6 +134,22 @@ type EconomicInputState = {
   topographyScore: number;
 };
 
+type BiomassWorkspaceState = {
+  plotAreaHa: number;
+  raiPerHectare: number;
+  calculationScope: CalculationScope;
+  sheetNames: string[];
+  workbookFile: File | null;
+  groups: SheetGroup[];
+  economicInputs: Record<string, EconomicInputState>;
+  result: CalculationResponse | null;
+  summaryDownloadName: string;
+  detailDownloadName: string;
+  componentDownloadName: string;
+  message: string | null;
+  error: string | null;
+};
+
 const workflowSectionIds = [
   "upload-workbook",
   "inspect-worksheets",
@@ -229,28 +246,39 @@ const scopeOptions: Array<{ value: CalculationScope; label: string; body: string
 ];
 
 export default function Page() {
-  const [plotAreaHa, setPlotAreaHa] = useState(0.1);
-  const [raiPerHectare, setRaiPerHectare] = useState(6.25);
-  const [calculationScope, setCalculationScope] = useState<CalculationScope>("biomass_only");
-  const [sheetNames, setSheetNames] = useState<string[]>([]);
-  const [workbookFile, setWorkbookFile] = useState<File | null>(null);
-  const [groups, setGroups] = useState<SheetGroup[]>([]);
-  const [economicInputs, setEconomicInputs] = useState<Record<string, EconomicInputState>>({});
-  const [result, setResult] = useState<CalculationResponse | null>(null);
-  const [summaryDownloadName, setSummaryDownloadName] = useState("forest_summary.xlsx");
-  const [detailDownloadName, setDetailDownloadName] = useState("forest_details.xlsx");
-  const [componentDownloadName, setComponentDownloadName] = useState("forest_components.xlsx");
+  const savedWorkspace = readWorkspace<BiomassWorkspaceState>("biomass");
+  const [plotAreaHa, setPlotAreaHa] = useState(savedWorkspace?.plotAreaHa ?? 0.1);
+  const [raiPerHectare, setRaiPerHectare] = useState(savedWorkspace?.raiPerHectare ?? 6.25);
+  const [calculationScope, setCalculationScope] = useState<CalculationScope>(savedWorkspace?.calculationScope ?? "biomass_only");
+  const [sheetNames, setSheetNames] = useState<string[]>(savedWorkspace?.sheetNames ?? []);
+  const [workbookFile, setWorkbookFile] = useState<File | null>(savedWorkspace?.workbookFile ?? null);
+  const [groups, setGroups] = useState<SheetGroup[]>(savedWorkspace?.groups ?? []);
+  const [economicInputs, setEconomicInputs] = useState<Record<string, EconomicInputState>>(savedWorkspace?.economicInputs ?? {});
+  const [result, setResult] = useState<CalculationResponse | null>(savedWorkspace?.result ?? null);
+  const [summaryDownloadName, setSummaryDownloadName] = useState(savedWorkspace?.summaryDownloadName ?? "forest_summary.xlsx");
+  const [detailDownloadName, setDetailDownloadName] = useState(savedWorkspace?.detailDownloadName ?? "forest_details.xlsx");
+  const [componentDownloadName, setComponentDownloadName] = useState(savedWorkspace?.componentDownloadName ?? "forest_components.xlsx");
   const [busy, setBusy] = useState(false);
   const [inspectBusy, setInspectBusy] = useState(false);
   const [dragActive, setDragActive] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(savedWorkspace?.message ?? null);
+  const [error, setError] = useState<string | null>(savedWorkspace?.error ?? null);
   const [activeStepId, setActiveStepId] = useState<(typeof workflowSectionIds)[number]>("upload-workbook");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const groupsRef = useRef<SheetGroup[]>([]);
   const economicInputsRef = useRef<Record<string, EconomicInputState>>({});
 
   useEffect(() => {
+    saveWorkspace<BiomassWorkspaceState>("biomass", {
+      plotAreaHa, raiPerHectare, calculationScope, sheetNames, workbookFile, groups, economicInputs, result,
+      summaryDownloadName, detailDownloadName, componentDownloadName, message, error,
+    });
+  }, [plotAreaHa, raiPerHectare, calculationScope, sheetNames, workbookFile, groups, economicInputs, result, summaryDownloadName, detailDownloadName, componentDownloadName, message, error]);
+
+  useEffect(() => {
+    if (savedWorkspace) {
+      return;
+    }
     async function loadConfig() {
       try {
         const response = await fetch(`${API_BASE_URL}/api/config`);
@@ -452,6 +480,25 @@ export default function Page() {
     setResult(null);
     setMessage(null);
     setError(null);
+  }
+
+  function clearCurrentWorkspace() {
+    if (!window.confirm("Clear the uploaded workbook, settings, and calculation results from this Biomass workspace?")) {
+      return;
+    }
+    clearWorkspace("biomass");
+    setWorkbookFile(null);
+    setSheetNames([]);
+    replaceGroups([]);
+    replaceEconomicInputs({});
+    setResult(null);
+    setCalculationScope("biomass_only");
+    setSummaryDownloadName("forest_summary.xlsx");
+    setDetailDownloadName("forest_details.xlsx");
+    setComponentDownloadName("forest_components.xlsx");
+    setMessage(null);
+    setError(null);
+    fileInputRef.current && (fileInputRef.current.value = "");
   }
 
   function handleWorkbookFile(file: File | null) {
@@ -681,6 +728,15 @@ export default function Page() {
                   help="Inspection starts immediately after upload."
                 />
               </div>
+              {workbookFile && (
+                <button
+                  className="mt-5 rounded-full border border-red-200 bg-red-50 px-5 py-3 text-sm font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-100"
+                  type="button"
+                  onClick={clearCurrentWorkspace}
+                >
+                  Clear Biomass workspace
+                </button>
+              )}
               {(message || error) && <Notice tone={error ? "error" : "success"}>{error ?? message}</Notice>}
             </SectionCard>
 

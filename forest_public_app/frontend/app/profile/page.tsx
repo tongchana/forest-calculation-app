@@ -2,6 +2,7 @@
 
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL, describeApiError } from "@/app/lib/api-base";
+import { clearWorkspace, readWorkspace, saveWorkspace } from "@/app/lib/workspace-session";
 import {
   AppHeader,
   DownloadButton,
@@ -33,6 +34,14 @@ type ProfileResponse = {
   sheetNames: string[];
   images: ProfileImage[];
   download: DownloadPayload;
+};
+
+type ProfileWorkspaceState = {
+  workbookFile: File | null;
+  sheetNames: string[];
+  result: ProfileResponse | null;
+  message: string | null;
+  error: string | null;
 };
 
 const requiredColumns = ["Species", "Height", "Position", "Crown cover"];
@@ -68,16 +77,21 @@ function fileSize(file: File | null) {
 }
 
 export default function ProfilePage() {
-  const [workbookFile, setWorkbookFile] = useState<File | null>(null);
-  const [sheetNames, setSheetNames] = useState<string[]>([]);
-  const [result, setResult] = useState<ProfileResponse | null>(null);
+  const savedWorkspace = readWorkspace<ProfileWorkspaceState>("profile");
+  const [workbookFile, setWorkbookFile] = useState<File | null>(savedWorkspace?.workbookFile ?? null);
+  const [sheetNames, setSheetNames] = useState<string[]>(savedWorkspace?.sheetNames ?? []);
+  const [result, setResult] = useState<ProfileResponse | null>(savedWorkspace?.result ?? null);
   const [busy, setBusy] = useState(false);
   const [inspectBusy, setInspectBusy] = useState(false);
   const [dragActive, setDragActive] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(savedWorkspace?.message ?? null);
+  const [error, setError] = useState<string | null>(savedWorkspace?.error ?? null);
   const [activeStepId, setActiveStepId] = useState<(typeof profileSectionIds)[number]>("download-template");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    saveWorkspace<ProfileWorkspaceState>("profile", { workbookFile, sheetNames, result, message, error });
+  }, [workbookFile, sheetNames, result, message, error]);
 
   useEffect(() => {
     const sections = profileSectionIds
@@ -208,6 +222,19 @@ export default function ProfilePage() {
       return;
     }
     void inspectWorkbook(file);
+  }
+
+  function clearCurrentWorkspace() {
+    if (!window.confirm("Clear the uploaded workbook and rendered profile outputs from this Profile workspace?")) {
+      return;
+    }
+    clearWorkspace("profile");
+    setWorkbookFile(null);
+    setSheetNames([]);
+    setResult(null);
+    setMessage(null);
+    setError(null);
+    fileInputRef.current && (fileInputRef.current.value = "");
   }
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -358,6 +385,15 @@ export default function ProfilePage() {
                   help="Inspection starts immediately after upload."
                 />
               </div>
+              {workbookFile && (
+                <button
+                  className="mt-5 rounded-full border border-red-200 bg-red-50 px-5 py-3 text-sm font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-100"
+                  type="button"
+                  onClick={clearCurrentWorkspace}
+                >
+                  Clear Profile workspace
+                </button>
+              )}
               {(message || error) && <Notice tone={error ? "error" : "success"}>{error ?? message}</Notice>}
             </SectionCard>
 
