@@ -63,3 +63,14 @@ export async function saveProfileEditorScene(scene: ProfileEditorScene | null) {
   });
   database.close();
 }
+
+export async function readProfileEditorScene(): Promise<ProfileEditorScene | null> {
+  const database = await openDatabase();
+  const value = await new Promise<ProfileEditorScene | null>((resolve, reject) => {
+    const request = database.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).get(PROFILE_EDITOR_SCENE_KEY);
+    request.onsuccess = () => resolve(request.result?.version === 1 ? request.result as ProfileEditorScene : null);
+    request.onerror = () => reject(request.error);
+  });
+  database.close();
+  return value;
+}

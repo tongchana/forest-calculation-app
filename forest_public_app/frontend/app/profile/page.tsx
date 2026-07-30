@@ -4,7 +4,7 @@ import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "re
 import * as XLSX from "xlsx";
 import { API_BASE_URL, describeApiError } from "@/app/lib/api-base";
 import { clearWorkspace, readWorkspace, saveWorkspace } from "@/app/lib/workspace-session";
-import { readWorkspaceFile, saveProfileEditorScene, saveWorkspaceFile, type ProfileEditorScene, type ProfileEditorTree } from "@/app/lib/workspace-file";
+import { readProfileEditorScene, readWorkspaceFile, saveProfileEditorScene, saveWorkspaceFile, type ProfileEditorScene, type ProfileEditorTree } from "@/app/lib/workspace-file";
 import {
   AppHeader,
   DownloadButton,
@@ -131,10 +131,15 @@ export default function ProfilePage() {
 
   useEffect(() => {
     if (workbookFile) return;
-    void readWorkspaceFile("profile").then((file) => {
+    void Promise.all([readWorkspaceFile("profile"), readProfileEditorScene()]).then(([file, scene]) => {
       if (!file) return;
       setWorkbookFile(file);
-      void inspectWorkbook(file);
+      if (scene) {
+        setSheetNames(scene.sheets.map((sheet) => sheet.name));
+        setMessage(`Restored ${scene.sheets.length} sheet(s) from the current Profile workspace.`);
+      } else {
+        void inspectWorkbook(file);
+      }
     });
   }, []);
 
