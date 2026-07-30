@@ -105,13 +105,17 @@ function fileSize(file: File | null) {
   return `${(file.size / 1024 / 1024).toFixed(2)} MB`;
 }
 
-async function blobToBase64(blob: Blob) {
+async function blobToDataUrl(blob: Blob) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",", 2)[1] ?? "");
+    reader.onload = () => resolve(String(reader.result));
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(blob);
   });
+}
+
+async function blobToBase64(blob: Blob) {
+  return (await blobToDataUrl(blob)).split(",", 2)[1] ?? "";
 }
 
 async function fetchWithRetries(url: string, attempts = 4) {
@@ -443,22 +447,23 @@ export default function ProfilePage() {
       };
       setResult(data);
       const scene = job.editorScene;
+      setMessage("Downloading editable profile layers…");
+      const bundleResponse = await fetchWithRetries(`${API_BASE_URL}/api/profile/generation-job/${startedJob.jobId}/editor-bundle`);
+      if (!bundleResponse.ok) throw new Error("Could not download editable profile layers.");
+      const bundle = await bundleResponse.arrayBuffer();
+      if (bundle.byteLength < 4) throw new Error("Editable profile layer bundle is invalid.");
+      const headerLength = new DataView(bundle).getUint32(0, false);
+      const payloadStart = 4 + headerLength;
+      if (payloadStart > bundle.byteLength) throw new Error("Editable profile layer bundle is incomplete.");
+      const bundleHeader = JSON.parse(new TextDecoder().decode(bundle.slice(4, payloadStart))) as {
+        assets: Array<{ url: string; offset: number; length: number }>;
+      };
       const assetDataUrls = new Map<string, string>();
-      const assetUrls = [
-        ...scene.sheets.map((sheet) => sheet.base),
-        ...scene.sheets.flatMap((sheet) => sheet.trees.flatMap((tree) => Object.values(tree.parts).map((part) => part.file))),
-      ];
-      await Promise.all([...new Set(assetUrls)].map(async (assetUrl) => {
-        const assetResponse = await fetchWithRetries(assetUrl);
-        if (!assetResponse.ok) throw new Error("Could not download an editable profile layer.");
-        const blob = await assetResponse.blob();
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result));
-          reader.onerror = () => reject(reader.error);
-          reader.readAsDataURL(blob);
-        });
-        assetDataUrls.set(assetUrl, dataUrl);
+      await Promise.all(bundleHeader.assets.map(async (asset) => {
+        const start = payloadStart + asset.offset;
+        const end = start + asset.length;
+        if (start < payloadStart || end > bundle.byteLength) throw new Error("Editable profile layer bundle is incomplete.");
+        assetDataUrls.set(asset.url, await blobToDataUrl(new Blob([bundle.slice(start, end)], { type: "image/png" })));
       }));
       const persistentScene: ProfileEditorServerScene = {
         ...scene,

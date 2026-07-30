@@ -1051,3 +1051,38 @@ def get_profile_generation_asset(job_id: str, asset_key: str) -> Response:
         raise HTTPException(status_code=404, detail="Profile generation asset expired or was not found.")
     content, media_type = asset
     return Response(content=content, media_type=media_type, headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.get("/api/profile/generation-job/{job_id}/editor-bundle")
+def get_profile_generation_editor_bundle(job_id: str) -> Response:
+    with PROFILE_GENERATION_JOB_LOCK:
+        job = PROFILE_GENERATION_JOBS.get(job_id)
+        editor_scene = job.get("editorScene") if job else None
+    if not editor_scene:
+        raise HTTPException(status_code=404, detail="Editable profile layers are not ready.")
+    session_id = editor_scene["sessionId"]
+    with PROFILE_EDITOR_SCENE_LOCK:
+        scene_assets = PROFILE_EDITOR_SCENES.get(session_id)
+        assets = dict(scene_assets) if scene_assets else None
+    if assets is None:
+        raise HTTPException(status_code=404, detail="Editable profile layers expired or were not found.")
+
+    url_prefix = f"/api/profile/editor-scene/{session_id}/asset/"
+    offset = 0
+    asset_records: list[dict[str, Any]] = []
+    payload_parts: list[bytes] = []
+    for asset_key, content in assets.items():
+        asset_records.append({
+            "url": f"{url_prefix}{asset_key}",
+            "offset": offset,
+            "length": len(content),
+        })
+        payload_parts.append(content)
+        offset += len(content)
+    header = json.dumps({"assets": asset_records}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    bundle = len(header).to_bytes(4, byteorder="big") + header + b"".join(payload_parts)
+    return Response(
+        content=bundle,
+        media_type="application/octet-stream",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
