@@ -291,7 +291,11 @@ def draw_top_view(
     ax.set_ylabel("Distance (m.)")
     ax.grid(False)
     ax.set_xticks(np.arange(0, 41, 5))
-    ax.set_yticks(np.arange(0, np.ceil(crown_top + 1.0) + 1, 5))
+    ax.set_yticks(
+        np.arange(0, 11, 5)
+        if fit_to_plot
+        else np.arange(0, np.ceil(crown_top + 1.0) + 1, 5)
+    )
     ax.spines[["top", "right", "left", "bottom"]].set_visible(False)
 
 
