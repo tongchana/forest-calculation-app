@@ -199,7 +199,7 @@ def add_bushy_crown(
     zorder: int,
     edgecolor: str | None = None,
     linewidth: float = 0.0,
-) -> PathPatch:
+) -> None:
     angles = np.linspace(0, 2 * np.pi, 220, endpoint=False)
     width = max(width, 0.18)
     height = max(height, 0.18)
@@ -231,7 +231,6 @@ def add_bushy_crown(
         capstyle="round",
     )
     ax.add_patch(patch)
-    return patch
 
 
 def draw_top_view(
@@ -239,17 +238,27 @@ def draw_top_view(
     df: pd.DataFrame,
     colors: dict[str, str],
     *,
-    clip_to_plot: bool = False,
+    fit_to_plot: bool = False,
 ) -> None:
     crown_left, crown_right, crown_bottom, crown_top = compute_top_view_limits(df)
-    plot_clip = Rectangle((0.0, 0.0), 40.0, 10.0, transform=ax.transData)
 
     for row in df.itertuples(index=False):
         crown_width = max(row.crown_x_plus + row.crown_x_minus, 0.2)
         crown_height = max(row.crown_y_plus + row.crown_y_minus, 0.2)
         crown_center_x = row.x + (row.crown_x_plus - row.crown_x_minus) / 2
         crown_center_y = row.y + (row.crown_y_plus - row.crown_y_minus) / 2
-        crown_patch = add_bushy_crown(
+        if fit_to_plot:
+            # Keep the entire irregular crown visible inside the 40 x 10 m
+            # survey frame. The stem marker remains at its measured position;
+            # only the plan-view crown artwork is shifted inward when its
+            # measured spread crosses a plot edge.
+            crown_width = min(crown_width, 40.0 / 1.16)
+            crown_height = min(crown_height, 10.0 / 1.16)
+            crown_radius_x = crown_width * 0.58
+            crown_radius_y = crown_height * 0.58
+            crown_center_x = float(np.clip(crown_center_x, crown_radius_x, 40.0 - crown_radius_x))
+            crown_center_y = float(np.clip(crown_center_y, crown_radius_y, 10.0 - crown_radius_y))
+        add_bushy_crown(
             ax=ax,
             center_x=crown_center_x,
             center_y=crown_center_y,
@@ -259,8 +268,6 @@ def draw_top_view(
             alpha=0.5,
             zorder=2,
         )
-        if clip_to_plot:
-            crown_patch.set_clip_path(plot_clip)
 
     ax.scatter(df["x"], df["y"], s=8, color="black", zorder=3)
     ax.add_patch(
@@ -275,7 +282,10 @@ def draw_top_view(
         )
     )
     ax.set_xlim(np.floor(crown_left - SIDE_PADDING_METERS), np.ceil(crown_right + SIDE_PADDING_METERS))
-    ax.set_ylim(np.floor(crown_bottom - 1.0), np.ceil(crown_top + 1.0))
+    if fit_to_plot:
+        ax.set_ylim(-1.0, 11.0)
+    else:
+        ax.set_ylim(np.floor(crown_bottom - 1.0), np.ceil(crown_top + 1.0))
     ax.set_aspect("equal", adjustable="box")
     ax.set_xlabel("Distance (m.)")
     ax.set_ylabel("Distance (m.)")

@@ -734,7 +734,7 @@ def render_freeform_sprite_experiment(
     tree_part_artists: dict[int, dict[str, object]] = {}
 
     if not layer_mode:
-        draw_top_view(top_ax, draw_df, colors, clip_to_plot=True)
+        draw_top_view(top_ax, draw_df, colors, fit_to_plot=True)
     thai_axis_font = get_thai_font_properties(size=11)
     top_ax.set_xlabel("\u0e23\u0e30\u0e22\u0e30\u0e17\u0e32\u0e07 (\u0e40\u0e21\u0e15\u0e23)", fontproperties=thai_axis_font)
     top_ax.set_ylabel("\u0e23\u0e30\u0e22\u0e30\u0e17\u0e32\u0e07 (\u0e40\u0e21\u0e15\u0e23)", fontproperties=thai_axis_font)
