@@ -4,7 +4,7 @@ import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "re
 import * as XLSX from "xlsx";
 import { API_BASE_URL, describeApiError } from "@/app/lib/api-base";
 import { clearWorkspace, readWorkspace, saveWorkspace } from "@/app/lib/workspace-session";
-import { readProfileEditorScene, readWorkspaceFile, saveProfileEditorRender, saveProfileEditorScene, saveProfileEditorServerScene, saveWorkspaceFile, type ProfileEditorScene, type ProfileEditorServerScene, type ProfileEditorTree } from "@/app/lib/workspace-file";
+import { readProfileEditorScene, readProfileResult, readWorkspaceFile, saveProfileEditorRender, saveProfileEditorScene, saveProfileEditorServerScene, saveProfileResult, saveWorkspaceFile, type ProfileEditorScene, type ProfileEditorServerScene, type ProfileEditorTree } from "@/app/lib/workspace-file";
 import {
   AppHeader,
   DownloadButton,
@@ -47,6 +47,13 @@ type ProfileResponse = {
   images: ProfileImage[];
   validation: ProfileSheetValidation[];
   download: DownloadPayload;
+};
+
+type ProfileGenerationJob = {
+  status: "queued" | "rendering" | "preparing_editor" | "ready" | "failed";
+  detail?: string;
+  profile?: ProfileResponse;
+  editorScene?: ProfileEditorServerScene;
 };
 
 type ProfileWorkspaceState = {
@@ -131,9 +138,13 @@ export default function ProfilePage() {
 
   useEffect(() => {
     if (workbookFile) return;
-    void Promise.all([readWorkspaceFile("profile"), readProfileEditorScene()]).then(([file, scene]) => {
+    void Promise.all([readWorkspaceFile("profile"), readProfileEditorScene(), readProfileResult<ProfileResponse>()]).then(([file, scene, storedResult]) => {
       if (!file) return;
       setWorkbookFile(file);
+      if (storedResult) {
+        setResult(storedResult);
+        setRenderMode(storedResult.renderMode);
+      }
       if (scene) {
         setSheetNames(scene.sheets.map((sheet) => sheet.name));
         setMessage(`Restored ${scene.sheets.length} sheet(s) from the current Profile workspace.`);
@@ -267,6 +278,7 @@ export default function ProfilePage() {
     void saveWorkspaceFile("profile", file);
     void saveProfileEditorRender(null);
     void saveProfileEditorServerScene(null);
+    void saveProfileResult<ProfileResponse>(null);
     if (file) void buildProfileEditorScene(file).then((scene) => saveProfileEditorScene(scene)).catch(() => saveProfileEditorScene(null));
     else void saveProfileEditorScene(null);
     setResult(null);
@@ -286,6 +298,7 @@ export default function ProfilePage() {
     void saveProfileEditorScene(null);
     void saveProfileEditorRender(null);
     void saveProfileEditorServerScene(null);
+    void saveProfileResult<ProfileResponse>(null);
     setWorkbookFile(null);
     setSheetNames([]);
     setResult(null);
@@ -335,13 +348,15 @@ export default function ProfilePage() {
     setBusy(true);
     setError(null);
     setMessage(null);
+    setResult(null);
+    void saveProfileResult<ProfileResponse>(null);
 
     const formData = new FormData();
     formData.append("file", workbookFile);
     formData.append("render_mode", renderMode);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/profile/calculate`, {
+      const response = await fetch(`${API_BASE_URL}/api/profile/generation-job`, {
         method: "POST",
         body: formData,
       });
@@ -349,17 +364,32 @@ export default function ProfilePage() {
         const data = await response.json().catch(() => ({ detail: "Profile calculation failed." }));
         throw new Error(data.detail ?? "Profile calculation failed.");
       }
-      const data = (await response.json()) as ProfileResponse;
-      setResult(data);
-      setMessage("Rendered diagrams. Preparing editable tree layers…");
-      const sceneFormData = new FormData();
-      sceneFormData.append("file", workbookFile);
-      const sceneResponse = await fetch(`${API_BASE_URL}/api/profile/editor-scene`, { method: "POST", body: sceneFormData });
-      if (!sceneResponse.ok) {
-        const sceneError = await sceneResponse.json().catch(() => ({ detail: "Could not prepare editable profile layers." }));
-        throw new Error(sceneError.detail ?? "Could not prepare editable profile layers.");
+      const startedJob = (await response.json()) as { jobId: string };
+      let job: ProfileGenerationJob | null = null;
+      let previousStatus = "";
+      for (let attempt = 0; attempt < 450; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const jobResponse = await fetch(`${API_BASE_URL}/api/profile/generation-job/${startedJob.jobId}`, { cache: "no-store" });
+        if (!jobResponse.ok) {
+          const jobError = await jobResponse.json().catch(() => ({ detail: "Could not read profile generation status." }));
+          throw new Error(jobError.detail ?? "Could not read profile generation status.");
+        }
+        job = (await jobResponse.json()) as ProfileGenerationJob;
+        if (job.status !== previousStatus) {
+          previousStatus = job.status;
+          if (job.status === "queued") setMessage("Profile render queued…");
+          if (job.status === "rendering") setMessage("Rendering current workbook diagrams…");
+          if (job.status === "preparing_editor") setMessage("Rendered diagrams. Preparing editable tree layers…");
+        }
+        if (job.status === "failed") throw new Error(job.detail ?? "Profile generation failed.");
+        if (job.status === "ready") break;
       }
-      const scene = (await sceneResponse.json()) as ProfileEditorServerScene;
+      if (!job || job.status !== "ready" || !job.profile || !job.editorScene) {
+        throw new Error("Profile generation timed out.");
+      }
+      const data = job.profile;
+      setResult(data);
+      const scene = job.editorScene;
       const assetDataUrls = new Map<string, string>();
       const assetUrls = [
         ...scene.sheets.map((sheet) => sheet.base),
@@ -393,6 +423,7 @@ export default function ProfilePage() {
       };
       await saveProfileEditorServerScene(persistentScene);
       await saveProfileEditorRender(null);
+      await saveProfileResult(data);
       const auditSummary = data.validation
         .map((sheet) => `${sheet.sheetName}: ${sheet.treeCount} trees, ${sheet.speciesCount} species`)
         .join(" | ");

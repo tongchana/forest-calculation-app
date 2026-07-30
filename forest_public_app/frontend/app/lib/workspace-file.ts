@@ -23,6 +23,7 @@ export type ProfileEditorScene = {
 const PROFILE_EDITOR_SCENE_KEY = "profile-editor-scene";
 const PROFILE_EDITOR_RENDER_KEY = "profile-editor-render";
 const PROFILE_EDITOR_SERVER_SCENE_KEY = "profile-editor-server-scene";
+const PROFILE_RESULT_KEY = "profile-result";
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -111,4 +112,26 @@ export async function saveProfileEditorServerScene(scene: ProfileEditorServerSce
     transaction.onerror = () => reject(transaction.error);
   });
   database.close();
+}
+
+export async function saveProfileResult<T>(result: T | null) {
+  const database = await openDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(STORE_NAME, "readwrite");
+    transaction.objectStore(STORE_NAME).put(result, PROFILE_RESULT_KEY);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+  database.close();
+}
+
+export async function readProfileResult<T>(): Promise<T | null> {
+  const database = await openDatabase();
+  const value = await new Promise<T | null>((resolve, reject) => {
+    const request = database.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).get(PROFILE_RESULT_KEY);
+    request.onsuccess = () => resolve(request.result ?? null);
+    request.onerror = () => reject(request.error);
+  });
+  database.close();
+  return value;
 }

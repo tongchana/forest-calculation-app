@@ -63,6 +63,10 @@ PROFILE_TEMPLATE_FILE = ROOT_DIR / "cal_EIA" / "profile_template.xlsx"
 PROFILE_EDITOR_SCENES: OrderedDict[str, dict[str, bytes]] = OrderedDict()
 PROFILE_EDITOR_SCENE_LOCK = threading.Lock()
 PROFILE_EDITOR_SCENE_LIMIT = 4
+PROFILE_GENERATION_JOBS: OrderedDict[str, dict[str, Any]] = OrderedDict()
+PROFILE_GENERATION_JOB_LOCK = threading.Lock()
+PROFILE_GENERATION_RENDER_LOCK = threading.Lock()
+PROFILE_GENERATION_JOB_LIMIT = 6
 OUTPUT_BASE_FILENAME = "forest_calculation_output.xlsx"
 SUMMARY_OUTPUT_FILENAME = "forest_summary.xlsx"
 DETAIL_OUTPUT_FILENAME = "forest_details.xlsx"
@@ -745,53 +749,57 @@ async def inspect_profile_workbook(file: UploadFile = File(...)) -> dict[str, An
     }
 
 
+def build_profile_editor_scene_manifest(file_name: str, file_bytes: bytes) -> dict[str, Any]:
+    session_id = uuid.uuid4().hex
+    assets: dict[str, bytes] = {}
+    manifest_sheets: list[dict[str, Any]] = []
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        temp_dir = Path(tmp_dir)
+        uploaded_path = temp_dir / file_name
+        uploaded_path.write_bytes(file_bytes)
+        for sheet_index, sheet_name in enumerate(list_profile_sheets(uploaded_path)):
+            rendered = render_editable_profile_scene(uploaded_path, sheet_name, temp_dir / "editor_scene")
+            slug = f"sheet-{sheet_index + 1}"
+            base_key = f"{slug}/base.png"
+            assets[base_key] = Path(rendered["basePath"]).read_bytes()
+            manifest_trees: list[dict[str, Any]] = []
+            for tree in rendered["trees"]:
+                tree_parts: dict[str, Any] = {}
+                for part_name, part in tree["parts"].items():
+                    asset_key = f"{slug}/tree-{tree['id']}-{part_name}.png"
+                    assets[asset_key] = Path(part["path"]).read_bytes()
+                    tree_parts[part_name] = {
+                        "file": f"/api/profile/editor-scene/{session_id}/asset/{asset_key}",
+                        "x": part["x"], "y": part["y"], "w": part["w"], "h": part["h"],
+                    }
+                manifest_trees.append({"id": tree["id"], "species": tree["species"], "parts": tree_parts})
+            manifest_sheets.append({
+                "name": sheet_name,
+                "slug": slug,
+                "base": f"/api/profile/editor-scene/{session_id}/asset/{base_key}",
+                "width": rendered["width"],
+                "height": rendered["height"],
+                "trees": manifest_trees,
+            })
+    with PROFILE_EDITOR_SCENE_LOCK:
+        PROFILE_EDITOR_SCENES[session_id] = assets
+        while len(PROFILE_EDITOR_SCENES) > PROFILE_EDITOR_SCENE_LIMIT:
+            PROFILE_EDITOR_SCENES.popitem(last=False)
+    return {"sessionId": session_id, "fileName": file_name, "sheets": manifest_sheets}
+
+
 @app.post("/api/profile/editor-scene")
 async def create_profile_editor_scene(file: UploadFile = File(...)) -> dict[str, Any]:
     file_bytes = await file.read()
     if not file.filename or not file.filename.lower().endswith(".xlsx"):
         raise HTTPException(status_code=400, detail="Please upload a valid .xlsx file.")
-    session_id = uuid.uuid4().hex
-    assets: dict[str, bytes] = {}
-    manifest_sheets: list[dict[str, Any]] = []
     try:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            temp_dir = Path(tmp_dir)
-            uploaded_path = temp_dir / file.filename
-            uploaded_path.write_bytes(file_bytes)
-            for sheet_index, sheet_name in enumerate(list_profile_sheets(uploaded_path)):
-                rendered = render_editable_profile_scene(uploaded_path, sheet_name, temp_dir / "editor_scene")
-                slug = f"sheet-{sheet_index + 1}"
-                base_key = f"{slug}/base.png"
-                assets[base_key] = Path(rendered["basePath"]).read_bytes()
-                manifest_trees: list[dict[str, Any]] = []
-                for tree in rendered["trees"]:
-                    tree_parts: dict[str, Any] = {}
-                    for part_name, part in tree["parts"].items():
-                        asset_key = f"{slug}/tree-{tree['id']}-{part_name}.png"
-                        assets[asset_key] = Path(part["path"]).read_bytes()
-                        tree_parts[part_name] = {
-                            "file": f"/api/profile/editor-scene/{session_id}/asset/{asset_key}",
-                            "x": part["x"], "y": part["y"], "w": part["w"], "h": part["h"],
-                        }
-                    manifest_trees.append({"id": tree["id"], "species": tree["species"], "parts": tree_parts})
-                manifest_sheets.append({
-                    "name": sheet_name,
-                    "slug": slug,
-                    "base": f"/api/profile/editor-scene/{session_id}/asset/{base_key}",
-                    "width": rendered["width"],
-                    "height": rendered["height"],
-                    "trees": manifest_trees,
-                })
+        return build_profile_editor_scene_manifest(file.filename, file_bytes)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         LOG.exception("Failed to create profile editor scene.")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    with PROFILE_EDITOR_SCENE_LOCK:
-        PROFILE_EDITOR_SCENES[session_id] = assets
-        while len(PROFILE_EDITOR_SCENES) > PROFILE_EDITOR_SCENE_LIMIT:
-            PROFILE_EDITOR_SCENES.popitem(last=False)
-    return {"sessionId": session_id, "fileName": file.filename, "sheets": manifest_sheets}
 
 
 @app.get("/api/profile/editor-scene/{session_id}/asset/{asset_path:path}")
@@ -918,25 +926,8 @@ async def calculate(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@app.post("/api/profile/calculate")
-async def calculate_profile(
-    file: UploadFile = File(...),
-    render_mode: str = Form(default="graphic"),
-) -> dict[str, Any]:
-    file_bytes = await file.read()
-    if not file.filename or not file.filename.lower().endswith(".xlsx"):
-        raise HTTPException(status_code=400, detail="Please upload a valid .xlsx file.")
-
-    if render_mode not in {"graphic", "realistic"}:
-        raise HTTPException(status_code=400, detail="render_mode must be either 'graphic' or 'realistic'.")
-
-    try:
-        images, zip_bytes, output_filename, validation = build_profile_outputs(file.filename, file_bytes, render_mode)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
+def build_profile_calculation_response(file_name: str, file_bytes: bytes, render_mode: str) -> dict[str, Any]:
+    images, zip_bytes, output_filename, validation = build_profile_outputs(file_name, file_bytes, render_mode)
     return {
         "sheetNames": [item["sheetName"] for item in images],
         "renderMode": render_mode,
@@ -947,3 +938,79 @@ async def calculate_profile(
             "contentBase64": base64.b64encode(zip_bytes).decode("ascii"),
         },
     }
+
+
+@app.post("/api/profile/calculate")
+async def calculate_profile(
+    file: UploadFile = File(...),
+    render_mode: str = Form(default="graphic"),
+) -> dict[str, Any]:
+    file_bytes = await file.read()
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Please upload a valid .xlsx file.")
+    if render_mode not in {"graphic", "realistic"}:
+        raise HTTPException(status_code=400, detail="render_mode must be either 'graphic' or 'realistic'.")
+    try:
+        return build_profile_calculation_response(file.filename, file_bytes, render_mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+def run_profile_generation_job(job_id: str, file_name: str, file_bytes: bytes, render_mode: str) -> None:
+    try:
+        with PROFILE_GENERATION_RENDER_LOCK:
+            with PROFILE_GENERATION_JOB_LOCK:
+                PROFILE_GENERATION_JOBS[job_id]["status"] = "rendering"
+            profile_result = build_profile_calculation_response(file_name, file_bytes, render_mode)
+            with PROFILE_GENERATION_JOB_LOCK:
+                PROFILE_GENERATION_JOBS[job_id]["status"] = "preparing_editor"
+            editor_scene = build_profile_editor_scene_manifest(file_name, file_bytes)
+        with PROFILE_GENERATION_JOB_LOCK:
+            PROFILE_GENERATION_JOBS[job_id].update({
+                "status": "ready",
+                "profile": profile_result,
+                "editorScene": editor_scene,
+                "finishedAt": time.time(),
+            })
+    except Exception as exc:  # noqa: BLE001
+        LOG.exception("Profile generation job %s failed.", job_id)
+        with PROFILE_GENERATION_JOB_LOCK:
+            PROFILE_GENERATION_JOBS[job_id].update({
+                "status": "failed",
+                "detail": str(exc),
+                "finishedAt": time.time(),
+            })
+
+
+@app.post("/api/profile/generation-job")
+async def create_profile_generation_job(
+    file: UploadFile = File(...),
+    render_mode: str = Form(default="graphic"),
+) -> dict[str, str]:
+    file_bytes = await file.read()
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Please upload a valid .xlsx file.")
+    if render_mode not in {"graphic", "realistic"}:
+        raise HTTPException(status_code=400, detail="render_mode must be either 'graphic' or 'realistic'.")
+    job_id = uuid.uuid4().hex
+    with PROFILE_GENERATION_JOB_LOCK:
+        PROFILE_GENERATION_JOBS[job_id] = {"status": "queued", "createdAt": time.time()}
+        while len(PROFILE_GENERATION_JOBS) > PROFILE_GENERATION_JOB_LIMIT:
+            PROFILE_GENERATION_JOBS.popitem(last=False)
+    threading.Thread(
+        target=run_profile_generation_job,
+        args=(job_id, file.filename, file_bytes, render_mode),
+        daemon=True,
+    ).start()
+    return {"jobId": job_id, "status": "queued"}
+
+
+@app.get("/api/profile/generation-job/{job_id}")
+def get_profile_generation_job(job_id: str) -> dict[str, Any]:
+    with PROFILE_GENERATION_JOB_LOCK:
+        job = PROFILE_GENERATION_JOBS.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Profile generation job expired or was not found.")
+        return dict(job)
