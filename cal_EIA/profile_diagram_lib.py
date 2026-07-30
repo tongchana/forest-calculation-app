@@ -199,7 +199,7 @@ def add_bushy_crown(
     zorder: int,
     edgecolor: str | None = None,
     linewidth: float = 0.0,
-) -> None:
+) -> PathPatch:
     angles = np.linspace(0, 2 * np.pi, 220, endpoint=False)
     width = max(width, 0.18)
     height = max(height, 0.18)
@@ -231,17 +231,25 @@ def add_bushy_crown(
         capstyle="round",
     )
     ax.add_patch(patch)
+    return patch
 
 
-def draw_top_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) -> None:
+def draw_top_view(
+    ax: plt.Axes,
+    df: pd.DataFrame,
+    colors: dict[str, str],
+    *,
+    clip_to_plot: bool = False,
+) -> None:
     crown_left, crown_right, crown_bottom, crown_top = compute_top_view_limits(df)
+    plot_clip = Rectangle((0.0, 0.0), 40.0, 10.0, transform=ax.transData)
 
     for row in df.itertuples(index=False):
         crown_width = max(row.crown_x_plus + row.crown_x_minus, 0.2)
         crown_height = max(row.crown_y_plus + row.crown_y_minus, 0.2)
         crown_center_x = row.x + (row.crown_x_plus - row.crown_x_minus) / 2
         crown_center_y = row.y + (row.crown_y_plus - row.crown_y_minus) / 2
-        add_bushy_crown(
+        crown_patch = add_bushy_crown(
             ax=ax,
             center_x=crown_center_x,
             center_y=crown_center_y,
@@ -251,6 +259,8 @@ def draw_top_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) -> Non
             alpha=0.5,
             zorder=2,
         )
+        if clip_to_plot:
+            crown_patch.set_clip_path(plot_clip)
 
     ax.scatter(df["x"], df["y"], s=8, color="black", zorder=3)
     ax.add_patch(
