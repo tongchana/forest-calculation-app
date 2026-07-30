@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from collections import OrderedDict
 from io import BytesIO
 from pathlib import Path
@@ -21,7 +22,7 @@ import pandas as pd
 from fastapi.encoders import jsonable_encoder
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.responses import FileResponse
 from openpyxl import load_workbook
 from pydantic import BaseModel
@@ -32,7 +33,7 @@ if str(ROOT_DIR) not in sys.path:
 WORKSPACE_DIR = ROOT_DIR if (ROOT_DIR / "cal_EIA").exists() else ROOT_DIR.parent
 
 import run_forest_calculation as calc
-from cal_EIA.generate_profile_realistic import render_freeform_sprite_experiment
+from cal_EIA.generate_profile_realistic import render_editable_profile_scene, render_freeform_sprite_experiment
 PROFILE_SCRIPT_DIR = WORKSPACE_DIR / "cal_EIA" / "05_profile_scripts"
 if not PROFILE_SCRIPT_DIR.exists():
     PROFILE_SCRIPT_DIR = WORKSPACE_DIR / "cal_EIA"
@@ -59,6 +60,9 @@ MASTER_FILE = ROOT_DIR / "species_reference_master_v1.xlsx"
 COMPONENT_TEMPLATE_FILE = ROOT_DIR / "forest_component_7.xlsx"
 PROFILE_SOURCE_FILE = ROOT_DIR / "cal_EIA" / "profile.xlsx"
 PROFILE_TEMPLATE_FILE = ROOT_DIR / "cal_EIA" / "profile_template.xlsx"
+PROFILE_EDITOR_SCENES: OrderedDict[str, dict[str, bytes]] = OrderedDict()
+PROFILE_EDITOR_SCENE_LOCK = threading.Lock()
+PROFILE_EDITOR_SCENE_LIMIT = 4
 OUTPUT_BASE_FILENAME = "forest_calculation_output.xlsx"
 SUMMARY_OUTPUT_FILENAME = "forest_summary.xlsx"
 DETAIL_OUTPUT_FILENAME = "forest_details.xlsx"
@@ -739,6 +743,65 @@ async def inspect_profile_workbook(file: UploadFile = File(...)) -> dict[str, An
         "fileName": file.filename,
         "sheetNames": get_uploaded_sheet_names(file_bytes),
     }
+
+
+@app.post("/api/profile/editor-scene")
+async def create_profile_editor_scene(file: UploadFile = File(...)) -> dict[str, Any]:
+    file_bytes = await file.read()
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Please upload a valid .xlsx file.")
+    session_id = uuid.uuid4().hex
+    assets: dict[str, bytes] = {}
+    manifest_sheets: list[dict[str, Any]] = []
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp_dir = Path(tmp_dir)
+            uploaded_path = temp_dir / file.filename
+            uploaded_path.write_bytes(file_bytes)
+            for sheet_index, sheet_name in enumerate(list_profile_sheets(uploaded_path)):
+                rendered = render_editable_profile_scene(uploaded_path, sheet_name, temp_dir / "editor_scene")
+                slug = f"sheet-{sheet_index + 1}"
+                base_key = f"{slug}/base.png"
+                assets[base_key] = Path(rendered["basePath"]).read_bytes()
+                manifest_trees: list[dict[str, Any]] = []
+                for tree in rendered["trees"]:
+                    tree_parts: dict[str, Any] = {}
+                    for part_name, part in tree["parts"].items():
+                        asset_key = f"{slug}/tree-{tree['id']}-{part_name}.png"
+                        assets[asset_key] = Path(part["path"]).read_bytes()
+                        tree_parts[part_name] = {
+                            "file": f"/api/profile/editor-scene/{session_id}/asset/{asset_key}",
+                            "x": part["x"], "y": part["y"], "w": part["w"], "h": part["h"],
+                        }
+                    manifest_trees.append({"id": tree["id"], "species": tree["species"], "parts": tree_parts})
+                manifest_sheets.append({
+                    "name": sheet_name,
+                    "slug": slug,
+                    "base": f"/api/profile/editor-scene/{session_id}/asset/{base_key}",
+                    "width": rendered["width"],
+                    "height": rendered["height"],
+                    "trees": manifest_trees,
+                })
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        LOG.exception("Failed to create profile editor scene.")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    with PROFILE_EDITOR_SCENE_LOCK:
+        PROFILE_EDITOR_SCENES[session_id] = assets
+        while len(PROFILE_EDITOR_SCENES) > PROFILE_EDITOR_SCENE_LIMIT:
+            PROFILE_EDITOR_SCENES.popitem(last=False)
+    return {"sessionId": session_id, "fileName": file.filename, "sheets": manifest_sheets}
+
+
+@app.get("/api/profile/editor-scene/{session_id}/asset/{asset_path:path}")
+def profile_editor_scene_asset(session_id: str, asset_path: str) -> Response:
+    with PROFILE_EDITOR_SCENE_LOCK:
+        scene_assets = PROFILE_EDITOR_SCENES.get(session_id)
+        content = scene_assets.get(asset_path) if scene_assets else None
+    if content is None:
+        raise HTTPException(status_code=404, detail="Editor scene asset expired or was not found.")
+    return Response(content=content, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
 
 
 @app.post("/api/calculate")

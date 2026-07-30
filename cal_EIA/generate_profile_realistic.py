@@ -537,7 +537,9 @@ def draw_tree(
     ax: plt.Axes,
     row,
     species_style_map: dict[str, dict[str, SpriteAsset]],
+    visible_parts: set[str] | None = None,
 ) -> None:
+    visible_parts = visible_parts or {"trunk", "branch", "crown"}
     crown_width = float(row.crown_width)
     crown_depth = float(row.crown_depth)
     crown_base_y = float(max(row.height_m - crown_depth, 0.0))
@@ -589,18 +591,19 @@ def draw_tree(
         bend_end_fraction=0.80,
     )
     warped_trunk_x_left = float(row.x - warped_trunk_asset.bottom_anchor_x * warped_trunk_display_width)
-    draw_sheared_image(
-        ax=ax,
-        image_rgba=warped_trunk_asset.rgba,
-        x_left=warped_trunk_x_left,
-        bottom_y=0.0,
-        width=warped_trunk_display_width,
-        height=trunk_display_height,
-        zorder=trunk_zorder,
-        alpha_scale=0.98,
-    )
+    if "trunk" in visible_parts:
+        draw_sheared_image(
+            ax=ax,
+            image_rgba=warped_trunk_asset.rgba,
+            x_left=warped_trunk_x_left,
+            bottom_y=0.0,
+            width=warped_trunk_display_width,
+            height=trunk_display_height,
+            zorder=trunk_zorder,
+            alpha_scale=0.98,
+        )
 
-    if branch_asset is not None:
+    if branch_asset is not None and "branch" in visible_parts:
         branch_y = float(np.clip(row.first_branch_m, 0.8, max(trunk_display_height - 0.4, 0.8)))
         branch_center_shift = compute_bend_shift(
             branch_y=branch_y,
@@ -633,18 +636,19 @@ def draw_tree(
             alpha_scale=0.98,
         )
 
-    draw_sheared_image(
-        ax=ax,
-        image_rgba=crown_asset.rgba,
-        x_left=crown_x_left,
-        bottom_y=crown_bottom_y,
-        width=crown_display_width,
-        height=min(crown_display_height, 20.0),
-        zorder=3.05,
-        bottom_shift_x=crown_bottom_shift,
-        top_shift_x=crown_top_shift,
-        alpha_scale=0.98,
-    )
+    if "crown" in visible_parts:
+        draw_sheared_image(
+            ax=ax,
+            image_rgba=crown_asset.rgba,
+            x_left=crown_x_left,
+            bottom_y=crown_bottom_y,
+            width=crown_display_width,
+            height=min(crown_display_height, 20.0),
+            zorder=3.05,
+            bottom_shift_x=crown_bottom_shift,
+            top_shift_x=crown_top_shift,
+            alpha_scale=0.98,
+        )
 
 
 def estimate_tree_profile_top(
@@ -664,7 +668,17 @@ def estimate_tree_profile_top(
     return crown_bottom_y + min(crown_display_height, 20.0)
 
 
-def render_freeform_sprite_experiment(excel_path: Path, sheet_name: str, output_dir: Path) -> Path:
+def render_freeform_sprite_experiment(
+    excel_path: Path,
+    sheet_name: str,
+    output_dir: Path,
+    *,
+    visible_tree_indices: set[int] | None = None,
+    visible_parts: set[str] | None = None,
+    layer_mode: bool = False,
+    dpi: int = 300,
+    output_suffix: str = "freeform_sprite_experiment",
+) -> Path:
     configure_matplotlib()
     df = load_profile_sheet(excel_path, sheet_name)
     if df.empty:
@@ -708,7 +722,8 @@ def render_freeform_sprite_experiment(excel_path: Path, sheet_name: str, output_
     profile_ax = figure.add_subplot(grid[1])
     legend_ax = figure.add_subplot(grid[2])
 
-    draw_top_view(top_ax, draw_df, colors)
+    if not layer_mode:
+        draw_top_view(top_ax, draw_df, colors)
     thai_axis_font = get_thai_font_properties(size=11)
     top_ax.set_xlabel("\u0e23\u0e30\u0e22\u0e30\u0e17\u0e32\u0e07 (\u0e40\u0e21\u0e15\u0e23)", fontproperties=thai_axis_font)
     top_ax.set_ylabel("\u0e23\u0e30\u0e22\u0e30\u0e17\u0e32\u0e07 (\u0e40\u0e21\u0e15\u0e23)", fontproperties=thai_axis_font)
@@ -716,7 +731,8 @@ def render_freeform_sprite_experiment(excel_path: Path, sheet_name: str, output_
     # Draw shorter trees first so trunks of emergent trees remain visible instead
     # of being hidden behind the crowns of lower neighbouring trees.
     for row in draw_df.sort_values(["height_m", "crown_width"], ascending=[True, False]).itertuples():
-        draw_tree(profile_ax, row, species_style_map=species_style_map)
+        if visible_tree_indices is None or int(row.Index) in visible_tree_indices:
+            draw_tree(profile_ax, row, species_style_map=species_style_map, visible_parts=visible_parts)
 
     # Compare every survey on the same 20 m minimum scale.  Keep a small
     # headroom above the final tick so its label remains fully visible.
@@ -823,10 +839,88 @@ def render_freeform_sprite_experiment(excel_path: Path, sheet_name: str, output_
     profile_ax.set_position([0.09, 0.31, 0.82, 0.25])
     legend_ax.set_position([0.09, 0.06, 0.82, 0.15])
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{excel_path.stem}_{sheet_name.replace(' ', '_')}_freeform_sprite_experiment.png"
-    figure.savefig(output_path, dpi=300, facecolor="white")
+    if layer_mode:
+        top_ax.clear()
+        top_ax.axis("off")
+        legend_ax.clear()
+        legend_ax.axis("off")
+        for label_artist in list(profile_ax.texts):
+            label_artist.remove()
+        profile_ax.axis("off")
+        figure.patch.set_alpha(0)
+    output_path = output_dir / f"{excel_path.stem}_{sheet_name.replace(' ', '_')}_{output_suffix}.png"
+    figure.savefig(
+        output_path,
+        dpi=dpi,
+        facecolor="none" if layer_mode else "white",
+        transparent=layer_mode,
+    )
     plt.close(figure)
     return output_path
+
+
+def render_editable_profile_scene(excel_path: Path, sheet_name: str, output_dir: Path) -> dict[str, object]:
+    """Render the approved realistic layout as one base plus editable transparent tree parts."""
+    scene_dir = output_dir / sheet_name.replace(" ", "_")
+    scene_dir.mkdir(parents=True, exist_ok=True)
+    base_path = render_freeform_sprite_experiment(
+        excel_path,
+        sheet_name,
+        scene_dir,
+        visible_tree_indices=set(),
+        output_suffix="editor_base",
+    )
+    with Image.open(base_path) as base_image:
+        base_width, base_height = base_image.size
+
+    profile_df = load_profile_sheet(excel_path, sheet_name)
+    trees: list[dict[str, object]] = []
+    for row_index, row in profile_df.iterrows():
+        tree_entry: dict[str, object] = {
+            "id": int(row_index),
+            "species": str(row["species"]),
+            "parts": {},
+        }
+        parts = tree_entry["parts"]
+        assert isinstance(parts, dict)
+        for part in ("trunk", "branch", "crown"):
+            full_layer_path = render_freeform_sprite_experiment(
+                excel_path,
+                sheet_name,
+                scene_dir,
+                visible_tree_indices={int(row_index)},
+                visible_parts={part},
+                layer_mode=True,
+                dpi=120,
+                output_suffix=f"tree_{row_index}_{part}_full",
+            )
+            with Image.open(full_layer_path) as layer_image:
+                rgba = layer_image.convert("RGBA")
+                alpha_bbox = rgba.getchannel("A").getbbox()
+                if alpha_bbox is None:
+                    continue
+                cropped = rgba.crop(alpha_bbox)
+                cropped_path = scene_dir / f"tree_{row_index}_{part}.png"
+                cropped.save(cropped_path, optimize=True)
+                scale_x = base_width / rgba.width
+                scale_y = base_height / rgba.height
+                parts[part] = {
+                    "path": cropped_path,
+                    "x": round(alpha_bbox[0] * scale_x, 3),
+                    "y": round(alpha_bbox[1] * scale_y, 3),
+                    "w": round((alpha_bbox[2] - alpha_bbox[0]) * scale_x, 3),
+                    "h": round((alpha_bbox[3] - alpha_bbox[1]) * scale_y, 3),
+                }
+            full_layer_path.unlink(missing_ok=True)
+        trees.append(tree_entry)
+
+    return {
+        "name": sheet_name,
+        "basePath": base_path,
+        "width": base_width,
+        "height": base_height,
+        "trees": trees,
+    }
 
 
 def main() -> None:

@@ -4,7 +4,7 @@ import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "re
 import * as XLSX from "xlsx";
 import { API_BASE_URL, describeApiError } from "@/app/lib/api-base";
 import { clearWorkspace, readWorkspace, saveWorkspace } from "@/app/lib/workspace-session";
-import { readProfileEditorScene, readWorkspaceFile, saveProfileEditorRender, saveProfileEditorScene, saveWorkspaceFile, type ProfileEditorScene, type ProfileEditorTree } from "@/app/lib/workspace-file";
+import { readProfileEditorScene, readWorkspaceFile, saveProfileEditorRender, saveProfileEditorScene, saveProfileEditorServerScene, saveWorkspaceFile, type ProfileEditorScene, type ProfileEditorServerScene, type ProfileEditorTree } from "@/app/lib/workspace-file";
 import {
   AppHeader,
   DownloadButton,
@@ -266,6 +266,7 @@ export default function ProfilePage() {
     setWorkbookFile(file);
     void saveWorkspaceFile("profile", file);
     void saveProfileEditorRender(null);
+    void saveProfileEditorServerScene(null);
     if (file) void buildProfileEditorScene(file).then((scene) => saveProfileEditorScene(scene)).catch(() => saveProfileEditorScene(null));
     else void saveProfileEditorScene(null);
     setResult(null);
@@ -284,6 +285,7 @@ export default function ProfilePage() {
     void saveWorkspaceFile("profile", null);
     void saveProfileEditorScene(null);
     void saveProfileEditorRender(null);
+    void saveProfileEditorServerScene(null);
     setWorkbookFile(null);
     setSheetNames([]);
     setResult(null);
@@ -349,7 +351,48 @@ export default function ProfilePage() {
       }
       const data = (await response.json()) as ProfileResponse;
       setResult(data);
-      if (data.renderMode === "realistic") void saveProfileEditorRender(data.images.map((image) => ({ sheetName: image.sheetName, imageDataUrl: `data:image/png;base64,${image.contentBase64}` })));
+      setMessage("Rendered diagrams. Preparing editable tree layers…");
+      const sceneFormData = new FormData();
+      sceneFormData.append("file", workbookFile);
+      const sceneResponse = await fetch(`${API_BASE_URL}/api/profile/editor-scene`, { method: "POST", body: sceneFormData });
+      if (!sceneResponse.ok) {
+        const sceneError = await sceneResponse.json().catch(() => ({ detail: "Could not prepare editable profile layers." }));
+        throw new Error(sceneError.detail ?? "Could not prepare editable profile layers.");
+      }
+      const scene = (await sceneResponse.json()) as ProfileEditorServerScene;
+      const assetDataUrls = new Map<string, string>();
+      const assetUrls = [
+        ...scene.sheets.map((sheet) => sheet.base),
+        ...scene.sheets.flatMap((sheet) => sheet.trees.flatMap((tree) => Object.values(tree.parts).map((part) => part.file))),
+      ];
+      await Promise.all([...new Set(assetUrls)].map(async (assetUrl) => {
+        const assetResponse = await fetch(assetUrl);
+        if (!assetResponse.ok) throw new Error("Could not download an editable profile layer.");
+        const blob = await assetResponse.blob();
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(blob);
+        });
+        assetDataUrls.set(assetUrl, dataUrl);
+      }));
+      const persistentScene: ProfileEditorServerScene = {
+        ...scene,
+        sheets: scene.sheets.map((sheet) => ({
+          ...sheet,
+          base: assetDataUrls.get(sheet.base) ?? sheet.base,
+          trees: sheet.trees.map((tree) => ({
+            ...tree,
+            parts: Object.fromEntries(Object.entries(tree.parts).map(([partName, part]) => [
+              partName,
+              { ...part, file: assetDataUrls.get(part.file) ?? part.file },
+            ])),
+          })),
+        })),
+      };
+      await saveProfileEditorServerScene(persistentScene);
+      await saveProfileEditorRender(null);
       const auditSummary = data.validation
         .map((sheet) => `${sheet.sheetName}: ${sheet.treeCount} trees, ${sheet.speciesCount} species`)
         .join(" | ");
