@@ -546,7 +546,7 @@ export default function ProfilePage() {
                     </div>
                     <a
                       className="inline-flex shrink-0 items-center justify-center rounded-full bg-[#1F5E3B] px-6 py-3 text-sm font-bold text-white transition hover:-translate-y-0.5"
-                      href="/profile-editor/"
+                        href="/profile-editor"
                     >
                       Open Profile Editor
                     </a>
