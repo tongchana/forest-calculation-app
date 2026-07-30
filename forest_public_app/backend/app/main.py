@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import base64
 import copy
+import gc
 import hashlib
 import json
 import logging
 import os
+import shutil
 import sys
 import tempfile
 import threading
@@ -22,7 +24,7 @@ import pandas as pd
 from fastapi.encoders import jsonable_encoder
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.responses import FileResponse
 from openpyxl import load_workbook
 from pydantic import BaseModel
@@ -60,7 +62,7 @@ MASTER_FILE = ROOT_DIR / "species_reference_master_v1.xlsx"
 COMPONENT_TEMPLATE_FILE = ROOT_DIR / "forest_component_7.xlsx"
 PROFILE_SOURCE_FILE = ROOT_DIR / "cal_EIA" / "profile.xlsx"
 PROFILE_TEMPLATE_FILE = ROOT_DIR / "cal_EIA" / "profile_template.xlsx"
-PROFILE_EDITOR_SCENES: OrderedDict[str, dict[str, bytes]] = OrderedDict()
+PROFILE_EDITOR_SCENES: OrderedDict[str, dict[str, Any]] = OrderedDict()
 PROFILE_EDITOR_SCENE_LOCK = threading.Lock()
 PROFILE_EDITOR_SCENE_LIMIT = 4
 PROFILE_GENERATION_JOBS: OrderedDict[str, dict[str, Any]] = OrderedDict()
@@ -751,23 +753,23 @@ async def inspect_profile_workbook(file: UploadFile = File(...)) -> dict[str, An
 
 def build_profile_editor_scene_manifest(file_name: str, file_bytes: bytes) -> dict[str, Any]:
     session_id = uuid.uuid4().hex
-    assets: dict[str, bytes] = {}
+    scene_root = Path(tempfile.mkdtemp(prefix=f"profile-editor-{session_id}-"))
+    assets: dict[str, Path] = {}
     manifest_sheets: list[dict[str, Any]] = []
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        temp_dir = Path(tmp_dir)
-        uploaded_path = temp_dir / file_name
+    try:
+        uploaded_path = scene_root / file_name
         uploaded_path.write_bytes(file_bytes)
         for sheet_index, sheet_name in enumerate(list_profile_sheets(uploaded_path)):
-            rendered = render_editable_profile_scene(uploaded_path, sheet_name, temp_dir / "editor_scene")
+            rendered = render_editable_profile_scene(uploaded_path, sheet_name, scene_root / "editor_scene")
             slug = f"sheet-{sheet_index + 1}"
             base_key = f"{slug}/base.png"
-            assets[base_key] = Path(rendered["basePath"]).read_bytes()
+            assets[base_key] = Path(rendered["basePath"])
             manifest_trees: list[dict[str, Any]] = []
             for tree in rendered["trees"]:
                 tree_parts: dict[str, Any] = {}
                 for part_name, part in tree["parts"].items():
                     asset_key = f"{slug}/tree-{tree['id']}-{part_name}.png"
-                    assets[asset_key] = Path(part["path"]).read_bytes()
+                    assets[asset_key] = Path(part["path"])
                     tree_parts[part_name] = {
                         "file": f"/api/profile/editor-scene/{session_id}/asset/{asset_key}",
                         "x": part["x"], "y": part["y"], "w": part["w"], "h": part["h"],
@@ -781,10 +783,17 @@ def build_profile_editor_scene_manifest(file_name: str, file_bytes: bytes) -> di
                 "height": rendered["height"],
                 "trees": manifest_trees,
             })
-    with PROFILE_EDITOR_SCENE_LOCK:
-        PROFILE_EDITOR_SCENES[session_id] = assets
-        while len(PROFILE_EDITOR_SCENES) > PROFILE_EDITOR_SCENE_LIMIT:
-            PROFILE_EDITOR_SCENES.popitem(last=False)
+            del rendered
+            gc.collect()
+        uploaded_path.unlink(missing_ok=True)
+        with PROFILE_EDITOR_SCENE_LOCK:
+            PROFILE_EDITOR_SCENES[session_id] = {"root": scene_root, "assets": assets}
+            while len(PROFILE_EDITOR_SCENES) > PROFILE_EDITOR_SCENE_LIMIT:
+                _, expired_scene = PROFILE_EDITOR_SCENES.popitem(last=False)
+                shutil.rmtree(expired_scene["root"], ignore_errors=True)
+    except Exception:
+        shutil.rmtree(scene_root, ignore_errors=True)
+        raise
     return {"sessionId": session_id, "fileName": file_name, "sheets": manifest_sheets}
 
 
@@ -805,11 +814,11 @@ async def create_profile_editor_scene(file: UploadFile = File(...)) -> dict[str,
 @app.get("/api/profile/editor-scene/{session_id}/asset/{asset_path:path}")
 def profile_editor_scene_asset(session_id: str, asset_path: str) -> Response:
     with PROFILE_EDITOR_SCENE_LOCK:
-        scene_assets = PROFILE_EDITOR_SCENES.get(session_id)
-        content = scene_assets.get(asset_path) if scene_assets else None
-    if content is None:
+        scene = PROFILE_EDITOR_SCENES.get(session_id)
+        asset_file = scene["assets"].get(asset_path) if scene else None
+    if asset_file is None or not asset_file.exists():
         raise HTTPException(status_code=404, detail="Editor scene asset expired or was not found.")
-    return Response(content=content, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
+    return FileResponse(asset_file, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
 
 
 @app.post("/api/calculate")
@@ -940,6 +949,59 @@ def build_profile_calculation_response(file_name: str, file_bytes: bytes, render
     }
 
 
+def build_profile_output_files(
+    file_name: str,
+    file_bytes: bytes,
+    render_mode: str,
+    job_root: Path,
+) -> tuple[dict[str, Any], dict[str, tuple[Path, str]]]:
+    """Render a background job entirely to disk to stay inside small-instance memory limits."""
+    uploaded_path = job_root / file_name
+    uploaded_path.write_bytes(file_bytes)
+    output_dir = job_root / "profile_images"
+    sheet_names = list_profile_sheets(uploaded_path)
+    validation = [audit_profile_sheet(uploaded_path, sheet_name) for sheet_name in sheet_names]
+    rendered_items: list[tuple[str, Path]] = []
+    if render_mode == "realistic":
+        for sheet_name in sheet_names:
+            rendered_items.append(
+                (sheet_name, render_freeform_sprite_experiment(uploaded_path, sheet_name, output_dir))
+            )
+            gc.collect()
+        output_filename = PROFILE_REALISTIC_OUTPUT_FILENAME
+    else:
+        rendered_items = render_workbook_profile_map(uploaded_path, output_dir)
+        output_filename = PROFILE_OUTPUT_FILENAME
+
+    result_assets: dict[str, tuple[Path, str]] = {}
+    image_manifest: list[dict[str, str]] = []
+    for image_index, (sheet_name, image_path) in enumerate(rendered_items):
+        asset_key = f"profile-image-{image_index}.png"
+        result_assets[asset_key] = (image_path, "image/png")
+        image_manifest.append({
+            "sheetName": sheet_name,
+            "filename": image_path.name,
+            "file": asset_key,
+        })
+
+    zip_path = job_root / output_filename
+    with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as zip_file:
+        for _, image_path in rendered_items:
+            zip_file.write(image_path, arcname=image_path.name)
+    result_assets["profile-output.zip"] = (zip_path, "application/zip")
+    uploaded_path.unlink(missing_ok=True)
+    return {
+        "sheetNames": sheet_names,
+        "renderMode": render_mode,
+        "images": image_manifest,
+        "validation": validation,
+        "download": {
+            "filename": output_filename,
+            "file": "profile-output.zip",
+        },
+    }, result_assets
+
+
 @app.post("/api/profile/calculate")
 async def calculate_profile(
     file: UploadFile = File(...),
@@ -959,36 +1021,23 @@ async def calculate_profile(
 
 
 def run_profile_generation_job(job_id: str, file_name: str, file_bytes: bytes, render_mode: str) -> None:
+    job_root = Path(tempfile.mkdtemp(prefix=f"profile-job-{job_id}-"))
     try:
         with PROFILE_GENERATION_RENDER_LOCK:
             with PROFILE_GENERATION_JOB_LOCK:
                 PROFILE_GENERATION_JOBS[job_id]["status"] = "rendering"
-            profile_result = build_profile_calculation_response(file_name, file_bytes, render_mode)
-            result_assets: dict[str, tuple[bytes, str]] = {}
-            image_manifest: list[dict[str, str]] = []
-            for image_index, image in enumerate(profile_result["images"]):
-                asset_key = f"profile-image-{image_index}.png"
-                result_assets[asset_key] = (base64.b64decode(image["contentBase64"]), "image/png")
-                image_manifest.append({
-                    "sheetName": image["sheetName"],
-                    "filename": image["filename"],
-                    "file": f"/api/profile/generation-job/{job_id}/asset/{asset_key}",
-                })
-            download_asset_key = "profile-output.zip"
-            result_assets[download_asset_key] = (
-                base64.b64decode(profile_result["download"]["contentBase64"]),
-                "application/zip",
+            profile_manifest, result_assets = build_profile_output_files(
+                file_name,
+                file_bytes,
+                render_mode,
+                job_root,
             )
-            profile_manifest = {
-                "sheetNames": profile_result["sheetNames"],
-                "renderMode": profile_result["renderMode"],
-                "images": image_manifest,
-                "validation": profile_result["validation"],
-                "download": {
-                    "filename": profile_result["download"]["filename"],
-                    "file": f"/api/profile/generation-job/{job_id}/asset/{download_asset_key}",
-                },
-            }
+            for image in profile_manifest["images"]:
+                image["file"] = f"/api/profile/generation-job/{job_id}/asset/{image['file']}"
+            profile_manifest["download"]["file"] = (
+                f"/api/profile/generation-job/{job_id}/asset/{profile_manifest['download']['file']}"
+            )
+            gc.collect()
             with PROFILE_GENERATION_JOB_LOCK:
                 PROFILE_GENERATION_JOBS[job_id]["status"] = "preparing_editor"
             editor_scene = build_profile_editor_scene_manifest(file_name, file_bytes)
@@ -998,9 +1047,11 @@ def run_profile_generation_job(job_id: str, file_name: str, file_bytes: bytes, r
                 "profile": profile_manifest,
                 "editorScene": editor_scene,
                 "resultAssets": result_assets,
+                "jobRoot": job_root,
                 "finishedAt": time.time(),
             })
     except Exception as exc:  # noqa: BLE001
+        shutil.rmtree(job_root, ignore_errors=True)
         LOG.exception("Profile generation job %s failed.", job_id)
         with PROFILE_GENERATION_JOB_LOCK:
             PROFILE_GENERATION_JOBS[job_id].update({
@@ -1024,7 +1075,10 @@ async def create_profile_generation_job(
     with PROFILE_GENERATION_JOB_LOCK:
         PROFILE_GENERATION_JOBS[job_id] = {"status": "queued", "createdAt": time.time()}
         while len(PROFILE_GENERATION_JOBS) > PROFILE_GENERATION_JOB_LIMIT:
-            PROFILE_GENERATION_JOBS.popitem(last=False)
+            _, expired_job = PROFILE_GENERATION_JOBS.popitem(last=False)
+            expired_root = expired_job.get("jobRoot")
+            if expired_root:
+                shutil.rmtree(expired_root, ignore_errors=True)
     threading.Thread(
         target=run_profile_generation_job,
         args=(job_id, file.filename, file_bytes, render_mode),
@@ -1039,7 +1093,7 @@ def get_profile_generation_job(job_id: str) -> dict[str, Any]:
         job = PROFILE_GENERATION_JOBS.get(job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Profile generation job expired or was not found.")
-        return {key: value for key, value in job.items() if key != "resultAssets"}
+        return {key: value for key, value in job.items() if key not in {"resultAssets", "jobRoot"}}
 
 
 @app.get("/api/profile/generation-job/{job_id}/asset/{asset_key}")
@@ -1049,8 +1103,10 @@ def get_profile_generation_asset(job_id: str, asset_key: str) -> Response:
         asset = job.get("resultAssets", {}).get(asset_key) if job else None
     if asset is None:
         raise HTTPException(status_code=404, detail="Profile generation asset expired or was not found.")
-    content, media_type = asset
-    return Response(content=content, media_type=media_type, headers={"Cache-Control": "private, max-age=3600"})
+    asset_file, media_type = asset
+    if not asset_file.exists():
+        raise HTTPException(status_code=404, detail="Profile generation asset expired or was not found.")
+    return FileResponse(asset_file, media_type=media_type, headers={"Cache-Control": "private, max-age=3600"})
 
 
 @app.get("/api/profile/generation-job/{job_id}/editor-bundle")
@@ -1062,27 +1118,37 @@ def get_profile_generation_editor_bundle(job_id: str) -> Response:
         raise HTTPException(status_code=404, detail="Editable profile layers are not ready.")
     session_id = editor_scene["sessionId"]
     with PROFILE_EDITOR_SCENE_LOCK:
-        scene_assets = PROFILE_EDITOR_SCENES.get(session_id)
-        assets = dict(scene_assets) if scene_assets else None
+        scene = PROFILE_EDITOR_SCENES.get(session_id)
+        assets = dict(scene["assets"]) if scene else None
     if assets is None:
         raise HTTPException(status_code=404, detail="Editable profile layers expired or were not found.")
 
     url_prefix = f"/api/profile/editor-scene/{session_id}/asset/"
     offset = 0
     asset_records: list[dict[str, Any]] = []
-    payload_parts: list[bytes] = []
-    for asset_key, content in assets.items():
+    for asset_key, asset_file in assets.items():
+        length = asset_file.stat().st_size
         asset_records.append({
             "url": f"{url_prefix}{asset_key}",
             "offset": offset,
-            "length": len(content),
+            "length": length,
         })
-        payload_parts.append(content)
-        offset += len(content)
+        offset += length
     header = json.dumps({"assets": asset_records}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    bundle = len(header).to_bytes(4, byteorder="big") + header + b"".join(payload_parts)
-    return Response(
-        content=bundle,
+
+    def stream_bundle():
+        yield len(header).to_bytes(4, byteorder="big")
+        yield header
+        for asset_file in assets.values():
+            with asset_file.open("rb") as handle:
+                while chunk := handle.read(1024 * 1024):
+                    yield chunk
+
+    return StreamingResponse(
+        stream_bundle(),
         media_type="application/octet-stream",
-        headers={"Cache-Control": "private, max-age=3600"},
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "Content-Length": str(4 + len(header) + offset),
+        },
     )
