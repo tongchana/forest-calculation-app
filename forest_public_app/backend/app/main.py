@@ -626,7 +626,9 @@ def run_uploaded_workflow(
 ) -> tuple[bytes, bytes, bytes | None, dict[str, pd.DataFrame]]:
     with tempfile.TemporaryDirectory() as tmp_dir:
         temp_dir = Path(tmp_dir)
-        uploaded_path = temp_dir / uploaded_filename
+        # Keep the uploaded workbook path deterministic. The browser-provided
+        # filename is metadata only and must not control Excel engine detection.
+        uploaded_path = temp_dir / "uploaded_workbook.xlsx"
         uploaded_path.write_bytes(file_bytes)
 
         output_base = temp_dir / OUTPUT_BASE_FILENAME
