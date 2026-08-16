@@ -148,6 +148,18 @@ class ForestEconomicReportTests(unittest.TestCase):
             component_sheet = workbook[next(name for name in workbook.sheetnames if name.startswith("COMP_01_component 1"))]
             self.assertEqual(component_sheet["A1"].value, "รายงานองค์ประกอบ: component 1")
             self.assertIn("พื้นที่โครงการ", str(component_sheet["A2"].value))
+            self.assertAlmostEqual(component_sheet["B9"].value, 1.6)
+            self.assertEqual(component_sheet["C9"].value, "ต้น/ไร่")
+            self.assertAlmostEqual(component_sheet["B10"].value, 16.0)
+            self.assertEqual(component_sheet["C10"].value, "ต้น")
+            self.assertAlmostEqual(component_sheet["B11"].value, 4.0)
+            self.assertEqual(component_sheet["C11"].value, "ต้น/ไร่")
+            self.assertAlmostEqual(component_sheet["B12"].value, 40.0)
+            self.assertEqual(component_sheet["C12"].value, "ต้น")
+            self.assertAlmostEqual(component_sheet["B13"].value, 10.0)
+            self.assertEqual(component_sheet["C13"].value, "ต้น/ไร่")
+            self.assertAlmostEqual(component_sheet["B14"].value, 100.0)
+            self.assertEqual(component_sheet["C14"].value, "ต้น")
 
 
 if __name__ == "__main__":

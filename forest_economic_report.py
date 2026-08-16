@@ -212,10 +212,9 @@ def _estimated_count_from_density(density_per_rai: object, component_area_rai: o
     return density * area
 
 
-def _estimated_tree_count_from_density(
+def _tree_density_per_rai_from_outputs(
     outputs: dict[str, pd.DataFrame],
     component_id: str,
-    component_area_rai: object,
 ) -> float | None:
     detail = outputs.get("DETAIL_VOLUME", pd.DataFrame())
     if detail.empty or "block_type" not in detail.columns:
@@ -229,13 +228,24 @@ def _estimated_tree_count_from_density(
     plot_count = tree_rows["Plot"].astype(str).str.strip().replace("", pd.NA).dropna().nunique()
     plot_area_ha = _to_float(outputs.get("__meta__", {}).get("plot_area_ha", 0.0))
     rai_per_hectare = _to_float(outputs.get("__meta__", {}).get("rai_per_hectare", 0.0))
-    component_area = _to_float(component_area_rai)
-    if not plot_count or plot_area_ha is None or rai_per_hectare is None or component_area is None:
+    if not plot_count or plot_area_ha is None or rai_per_hectare is None:
         return None
     sampled_area_rai = plot_count * plot_area_ha * rai_per_hectare
     if sampled_area_rai <= 0:
         return None
-    return (len(tree_rows.index) / sampled_area_rai) * component_area
+    return len(tree_rows.index) / sampled_area_rai
+
+
+def _estimated_tree_count_from_density(
+    outputs: dict[str, pd.DataFrame],
+    component_id: str,
+    component_area_rai: object,
+) -> float | None:
+    density = _tree_density_per_rai_from_outputs(outputs, component_id)
+    component_area = _to_float(component_area_rai)
+    if density is None or component_area is None:
+        return None
+    return density * component_area
 
 
 def _warning_rows(bundle: dict[str, object]) -> list[dict[str, object]]:
@@ -608,6 +618,7 @@ def _write_component_sheet(ws, outputs: dict[str, pd.DataFrame], bundle: dict[st
     ecosystem_rows = _weighted_component_ecosystem_details(bundle, component_id)
     tq_columns = _sort_tq_values(detail_frame["tq"].tolist()) if not detail_frame.empty else []
     component_area_rai = summary_dict.get("component_area_rai")
+    tree_density_per_rai = _tree_density_per_rai_from_outputs(outputs, component_id)
     estimated_tree_count = _estimated_tree_count_from_density(outputs, component_id, component_area_rai)
 
     ws.merge_cells("A1:H1")
@@ -623,9 +634,12 @@ def _write_component_sheet(ws, outputs: dict[str, pd.DataFrame], bundle: dict[st
         ["พื้นที่โครงการ", component_area_rai, "ไร่"],
         ["ประเภทป่าที่พบ", ", ".join(str(item) for item in summary_dict.get("forest_types_detected", [])), ""],
         ["ชั้นคุณภาพไม้ที่พบ", ", ".join(str(item) for item in summary_dict.get("tq_detected", [])), ""],
-        ["ไม้ใหญ่ยืนต้น", estimated_tree_count, "ต้น"],
-        ["ลูกไม้", regeneration_dict.get("sapling_density_per_rai"), "ต้น/ไร่"],
-        ["กล้าไม้", regeneration_dict.get("seedling_density_per_rai"), "ต้น/ไร่"],
+        ["ไม้ใหญ่ยืนต้น (ความหนาแน่น)", tree_density_per_rai, "ต้น/ไร่"],
+        ["ไม้ใหญ่ยืนต้น (ประเมินในพื้นที่โครงการ)", estimated_tree_count, "ต้น"],
+        ["ลูกไม้ (ความหนาแน่น)", regeneration_dict.get("sapling_density_per_rai"), "ต้น/ไร่"],
+        ["ลูกไม้ (ประเมินในพื้นที่โครงการ)", regeneration_dict.get("sapling_estimated_count"), "ต้น"],
+        ["กล้าไม้ (ความหนาแน่น)", regeneration_dict.get("seedling_density_per_rai"), "ต้น/ไร่"],
+        ["กล้าไม้ (ประเมินในพื้นที่โครงการ)", regeneration_dict.get("seedling_estimated_count"), "ต้น"],
     ]
     current_row = _write_component_table(ws, current_row, "ข้อมูลทั่วไป", general_headers, general_rows)
 

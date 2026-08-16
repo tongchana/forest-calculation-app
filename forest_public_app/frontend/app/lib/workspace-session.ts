@@ -1,8 +1,4 @@
-/**
- * Keeps a workspace alive while Next.js swaps route components.  This is
- * deliberately in-memory: uploaded workbooks and calculation output are not
- * written to browser storage and are discarded when the tab is closed.
- */
+/** Keeps uploaded files and results available while the user changes routes in this tab. */
 const workspaces = new Map<string, unknown>();
 
 export function readWorkspace<T>(key: string): T | undefined {

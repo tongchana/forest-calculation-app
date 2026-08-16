@@ -1,8 +1,10 @@
 "use client";
 
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import { API_BASE_URL, describeApiError } from "@/app/lib/api-base";
 import { clearWorkspace, readWorkspace, saveWorkspace } from "@/app/lib/workspace-session";
+import { readProfileEditorScene, readProfileResult, readWorkspaceFile, saveProfileEditorRender, saveProfileEditorScene, saveProfileEditorServerScene, saveProfileResult, saveWorkspaceFile, type ProfileEditorScene, type ProfileEditorServerScene, type ProfileEditorTree } from "@/app/lib/workspace-file";
 import {
   AppHeader,
   DownloadButton,
@@ -30,16 +32,43 @@ type ProfileImage = {
   contentBase64: string;
 };
 
+type ProfileSheetValidation = {
+  sheetName: string;
+  treeCount: number;
+  speciesCount: number;
+  species: string[];
+};
+
+type RenderMode = "graphic" | "realistic";
+
 type ProfileResponse = {
   sheetNames: string[];
+  renderMode: RenderMode;
   images: ProfileImage[];
+  validation: ProfileSheetValidation[];
   download: DownloadPayload;
+};
+
+type ProfileJobResult = {
+  sheetNames: string[];
+  renderMode: RenderMode;
+  images: Array<{ sheetName: string; filename: string; file: string }>;
+  validation: ProfileSheetValidation[];
+  download: { filename: string; file: string };
+};
+
+type ProfileGenerationJob = {
+  status: "queued" | "rendering" | "preparing_editor" | "ready" | "failed";
+  detail?: string;
+  profile?: ProfileJobResult;
+  editorScene?: ProfileEditorServerScene;
 };
 
 type ProfileWorkspaceState = {
   workbookFile: File | null;
   sheetNames: string[];
   result: ProfileResponse | null;
+  renderMode: RenderMode;
   message: string | null;
   error: string | null;
 };
@@ -76,11 +105,61 @@ function fileSize(file: File | null) {
   return `${(file.size / 1024 / 1024).toFixed(2)} MB`;
 }
 
+async function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function blobToBase64(blob: Blob) {
+  return (await blobToDataUrl(blob)).split(",", 2)[1] ?? "";
+}
+
+async function fetchWithRetries(url: string, attempts = 4) {
+  let lastError: unknown = new Error("Request failed.");
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetch(url, { cache: "no-store" });
+      if (response.ok || response.status < 500) return response;
+      lastError = new Error(`Request failed with status ${response.status}.`);
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt + 1 < attempts) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+  }
+  throw lastError;
+}
+
+function profileNumber(value: unknown, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+async function buildProfileEditorScene(file: File): Promise<ProfileEditorScene> {
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+  const sheets = workbook.SheetNames.map((name, sheetIndex) => {
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[name], { header: 1, blankrows: false, defval: null });
+    const trees: ProfileEditorTree[] = rows.slice(2).flatMap((row, rowIndex) => {
+      const species = String(row[1] ?? "").trim();
+      const x = profileNumber(row[5], NaN), y = profileNumber(row[6], NaN), height = profileNumber(row[3], NaN);
+      if (!species || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(height)) return [];
+      return [{ id: profileNumber(row[0], rowIndex + 1), species, x, y, height, firstBranch: profileNumber(row[4], height * .55), crownXPlus: Math.max(.5, profileNumber(row[7], 1.5)), crownXMinus: Math.max(.5, profileNumber(row[8], 1.5)), crownYPlus: Math.max(.5, profileNumber(row[9], 1.5)), crownYMinus: Math.max(.5, profileNumber(row[10], 1.5)) }];
+    });
+    return { name, slug: `upload-${sheetIndex + 1}`, trees };
+  }).filter((sheet) => sheet.trees.length > 0);
+  if (!sheets.length) throw new Error("No usable profile rows were found for the editor.");
+  return { version: 1, fileName: file.name, sheets };
+}
+
 export default function ProfilePage() {
   const savedWorkspace = readWorkspace<ProfileWorkspaceState>("profile");
   const [workbookFile, setWorkbookFile] = useState<File | null>(savedWorkspace?.workbookFile ?? null);
   const [sheetNames, setSheetNames] = useState<string[]>(savedWorkspace?.sheetNames ?? []);
   const [result, setResult] = useState<ProfileResponse | null>(savedWorkspace?.result ?? null);
+  const [renderMode, setRenderMode] = useState<RenderMode>(savedWorkspace?.renderMode ?? "graphic");
   const [busy, setBusy] = useState(false);
   const [inspectBusy, setInspectBusy] = useState(false);
   const [dragActive, setDragActive] = useState(false);
@@ -90,8 +169,26 @@ export default function ProfilePage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    saveWorkspace<ProfileWorkspaceState>("profile", { workbookFile, sheetNames, result, message, error });
-  }, [workbookFile, sheetNames, result, message, error]);
+    saveWorkspace<ProfileWorkspaceState>("profile", { workbookFile, sheetNames, result, renderMode, message, error });
+  }, [workbookFile, sheetNames, result, renderMode, message, error]);
+
+  useEffect(() => {
+    if (workbookFile) return;
+    void Promise.all([readWorkspaceFile("profile"), readProfileEditorScene(), readProfileResult<ProfileResponse>()]).then(([file, scene, storedResult]) => {
+      if (!file) return;
+      setWorkbookFile(file);
+      if (storedResult) {
+        setResult(storedResult);
+        setRenderMode(storedResult.renderMode);
+      }
+      if (scene) {
+        setSheetNames(scene.sheets.map((sheet) => sheet.name));
+        setMessage(`Restored ${scene.sheets.length} sheet(s) from the current Profile workspace.`);
+      } else {
+        void inspectWorkbook(file);
+      }
+    });
+  }, []);
 
   useEffect(() => {
     const sections = profileSectionIds
@@ -214,6 +311,12 @@ export default function ProfilePage() {
       return;
     }
     setWorkbookFile(file);
+    void saveWorkspaceFile("profile", file);
+    void saveProfileEditorRender(null);
+    void saveProfileEditorServerScene(null);
+    void saveProfileResult<ProfileResponse>(null);
+    if (file) void buildProfileEditorScene(file).then((scene) => saveProfileEditorScene(scene)).catch(() => saveProfileEditorScene(null));
+    else void saveProfileEditorScene(null);
     setResult(null);
     setError(null);
     setMessage(null);
@@ -225,16 +328,20 @@ export default function ProfilePage() {
   }
 
   function clearCurrentWorkspace() {
-    if (!window.confirm("Clear the uploaded workbook and rendered profile outputs from this Profile workspace?")) {
-      return;
-    }
+    if (!window.confirm("Clear the uploaded workbook and rendered profile outputs from this Profile workspace?")) return;
     clearWorkspace("profile");
+    void saveWorkspaceFile("profile", null);
+    void saveProfileEditorScene(null);
+    void saveProfileEditorRender(null);
+    void saveProfileEditorServerScene(null);
+    void saveProfileResult<ProfileResponse>(null);
     setWorkbookFile(null);
     setSheetNames([]);
     setResult(null);
+    setRenderMode("graphic");
     setMessage(null);
     setError(null);
-    fileInputRef.current && (fileInputRef.current.value = "");
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -250,6 +357,12 @@ export default function ProfilePage() {
   function handleDragOver(event: DragEvent<HTMLLabelElement>) {
     event.preventDefault();
     setDragActive(true);
+  }
+
+  function handleRenderModeChange(mode: RenderMode) {
+    setRenderMode(mode);
+    setResult(null);
+    setMessage(null);
   }
 
   function handleDragLeave(event: DragEvent<HTMLLabelElement>) {
@@ -271,12 +384,15 @@ export default function ProfilePage() {
     setBusy(true);
     setError(null);
     setMessage(null);
+    setResult(null);
+    void saveProfileResult<ProfileResponse>(null);
 
     const formData = new FormData();
     formData.append("file", workbookFile);
+    formData.append("render_mode", renderMode);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/profile/calculate`, {
+      const response = await fetch(`${API_BASE_URL}/api/profile/generation-job`, {
         method: "POST",
         body: formData,
       });
@@ -284,9 +400,92 @@ export default function ProfilePage() {
         const data = await response.json().catch(() => ({ detail: "Profile calculation failed." }));
         throw new Error(data.detail ?? "Profile calculation failed.");
       }
-      const data = (await response.json()) as ProfileResponse;
+      const startedJob = (await response.json()) as { jobId: string };
+      let job: ProfileGenerationJob | null = null;
+      let previousStatus = "";
+      for (let attempt = 0; attempt < 450; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const jobResponse = await fetchWithRetries(`${API_BASE_URL}/api/profile/generation-job/${startedJob.jobId}`);
+        if (!jobResponse.ok) {
+          const jobError = await jobResponse.json().catch(() => ({ detail: "Could not read profile generation status." }));
+          throw new Error(jobError.detail ?? "Could not read profile generation status.");
+        }
+        job = (await jobResponse.json()) as ProfileGenerationJob;
+        if (job.status !== previousStatus) {
+          previousStatus = job.status;
+          if (job.status === "queued") setMessage("Profile render queued…");
+          if (job.status === "rendering") setMessage("Rendering current workbook diagrams…");
+          if (job.status === "preparing_editor") setMessage("Rendered diagrams. Preparing editable tree layers…");
+        }
+        if (job.status === "failed") throw new Error(job.detail ?? "Profile generation failed.");
+        if (job.status === "ready") break;
+      }
+      if (!job || job.status !== "ready" || !job.profile || !job.editorScene) {
+        throw new Error("Profile generation timed out.");
+      }
+      const profileManifest = job.profile;
+      const images = await Promise.all(profileManifest.images.map(async (image) => {
+        const imageResponse = await fetchWithRetries(image.file);
+        if (!imageResponse.ok) throw new Error("Could not download a rendered profile image.");
+        return {
+          sheetName: image.sheetName,
+          filename: image.filename,
+          contentBase64: await blobToBase64(await imageResponse.blob()),
+        };
+      }));
+      const downloadResponse = await fetchWithRetries(profileManifest.download.file);
+      if (!downloadResponse.ok) throw new Error("Could not download the rendered profile package.");
+      const data: ProfileResponse = {
+        sheetNames: profileManifest.sheetNames,
+        renderMode: profileManifest.renderMode,
+        images,
+        validation: profileManifest.validation,
+        download: {
+          filename: profileManifest.download.filename,
+          contentBase64: await blobToBase64(await downloadResponse.blob()),
+        },
+      };
+      const scene = job.editorScene;
+      setMessage("Downloading editable profile layers…");
+      const bundleResponse = await fetchWithRetries(`${API_BASE_URL}/api/profile/generation-job/${startedJob.jobId}/editor-bundle`);
+      if (!bundleResponse.ok) throw new Error("Could not download editable profile layers.");
+      const bundle = await bundleResponse.arrayBuffer();
+      if (bundle.byteLength < 4) throw new Error("Editable profile layer bundle is invalid.");
+      const headerLength = new DataView(bundle).getUint32(0, false);
+      const payloadStart = 4 + headerLength;
+      if (payloadStart > bundle.byteLength) throw new Error("Editable profile layer bundle is incomplete.");
+      const bundleHeader = JSON.parse(new TextDecoder().decode(bundle.slice(4, payloadStart))) as {
+        assets: Array<{ url: string; offset: number; length: number }>;
+      };
+      const assetDataUrls = new Map<string, string>();
+      await Promise.all(bundleHeader.assets.map(async (asset) => {
+        const start = payloadStart + asset.offset;
+        const end = start + asset.length;
+        if (start < payloadStart || end > bundle.byteLength) throw new Error("Editable profile layer bundle is incomplete.");
+        assetDataUrls.set(asset.url, await blobToDataUrl(new Blob([bundle.slice(start, end)], { type: "image/png" })));
+      }));
+      const persistentScene: ProfileEditorServerScene = {
+        ...scene,
+        sheets: scene.sheets.map((sheet) => ({
+          ...sheet,
+          base: assetDataUrls.get(sheet.base) ?? sheet.base,
+          trees: sheet.trees.map((tree) => ({
+            ...tree,
+            parts: Object.fromEntries(Object.entries(tree.parts).map(([partName, part]) => [
+              partName,
+              { ...part, file: assetDataUrls.get(part.file) ?? part.file },
+            ])),
+          })),
+        })),
+      };
+      await saveProfileEditorServerScene(persistentScene);
+      await saveProfileEditorRender(null);
+      await saveProfileResult(data);
       setResult(data);
-      setMessage(`Generated ${data.images.length} profile diagram(s).`);
+      const auditSummary = data.validation
+        .map((sheet) => `${sheet.sheetName}: ${sheet.treeCount} trees, ${sheet.speciesCount} species`)
+        .join(" | ");
+      setMessage(`Generated ${data.images.length} ${data.renderMode} profile diagram(s). Verified ${auditSummary}.`);
     } catch (calcError) {
       setResult(null);
       setError(describeApiError(calcError));
@@ -319,10 +518,10 @@ export default function ProfilePage() {
                     Profile Diagram Studio
                   </h2>
                   <p className="mt-5 max-w-2xl text-[15px] leading-8 text-[#667085] sm:text-base">
-                    Upload profile Excel data, validate tree structure fields, generate canopy profile diagrams, and download image outputs.
+                    Upload profile Excel data, validate tree structure fields, generate canopy profile diagrams, and download image outputs. The editor keeps the approved 20 m minimum vertical scale and lets you refine profile assets directly on canvas.
                   </p>
                   <div className="mt-6 flex flex-wrap gap-2">
-                    {["Template", "Upload", "Validate", "Generate", "Download"].map((chip) => (
+                    {["Template", "Upload", "Validate", "Generate", "Edit", "Download"].map((chip) => (
                       <span key={chip} className="rounded-full border border-[#DDE5D5] bg-[#F6F8F4] px-4 py-2 text-sm font-semibold text-[#1F5E3B]">
                         {chip}
                       </span>
@@ -386,11 +585,7 @@ export default function ProfilePage() {
                 />
               </div>
               {workbookFile && (
-                <button
-                  className="mt-5 rounded-full border border-red-200 bg-red-50 px-5 py-3 text-sm font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-100"
-                  type="button"
-                  onClick={clearCurrentWorkspace}
-                >
+                <button className="mt-5 rounded-full border border-red-200 bg-red-50 px-5 py-3 text-sm font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-100" type="button" onClick={clearCurrentWorkspace}>
                   Clear Profile workspace
                 </button>
               )}
@@ -440,13 +635,43 @@ export default function ProfilePage() {
               id="generate-profile-diagrams"
               title="Generate profile diagrams"
             >
+              <div className="mb-5 grid gap-3 md:grid-cols-2">
+                <button
+                  className={`rounded-3xl border p-5 text-left transition ${
+                    renderMode === "graphic"
+                      ? "border-white bg-white text-[#1F5E3B] shadow-[0_12px_30px_rgba(0,0,0,0.16)]"
+                      : "border-white/30 bg-white/10 text-white hover:bg-white/15"
+                  }`}
+                  type="button"
+                  onClick={() => handleRenderModeChange("graphic")}
+                >
+                  <span className="block text-sm font-bold">Data graphic</span>
+                  <span className={`mt-1 block text-sm leading-6 ${renderMode === "graphic" ? "text-[#55705F]" : "text-white/75"}`}>
+                    Color-coded canopies make species, crown size, and surveyed positions easy to compare.
+                  </span>
+                </button>
+                <button
+                  className={`rounded-3xl border p-5 text-left transition ${
+                    renderMode === "realistic"
+                      ? "border-white bg-white text-[#1F5E3B] shadow-[0_12px_30px_rgba(0,0,0,0.16)]"
+                      : "border-white/30 bg-white/10 text-white hover:bg-white/15"
+                  }`}
+                  type="button"
+                  onClick={() => handleRenderModeChange("realistic")}
+                >
+                  <span className="block text-sm font-bold">Illustrated forest</span>
+                  <span className={`mt-1 block text-sm leading-6 ${renderMode === "realistic" ? "text-[#55705F]" : "text-white/75"}`}>
+                    Tree crowns, trunks, branches, and a measurement grid create a report-ready forest scene.
+                  </span>
+                </button>
+              </div>
               <button
                 className="inline-flex w-full items-center justify-center rounded-full bg-white px-6 py-4 text-sm font-bold text-[#1F5E3B] transition hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45"
                 disabled={!canRender}
                 type="button"
                 onClick={handleCalculate}
               >
-                {busy ? "Rendering profile diagrams..." : "Generate profile diagrams"}
+                {busy ? "Creating profile diagrams..." : `Create ${renderMode === "graphic" ? "data graphic" : "illustrated forest"} diagrams`}
               </button>
               {!canRender && <Notice tone="warning">Upload a valid profile workbook and wait for inspection before rendering diagrams.</Notice>}
               {result && <Notice tone="success">Profile diagrams generated successfully. Review them below or download the ZIP package.</Notice>}
@@ -485,6 +710,25 @@ export default function ProfilePage() {
                 </div>
               ) : (
                 <EmptyState title="No diagrams generated yet" body="Generate profile diagrams to preview one image card per worksheet." />
+              )}
+              {result && (
+                <section className="mt-6 rounded-[28px] border border-[#DDE5D5] bg-[#F1F7EE] p-6">
+                  <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#6A8F5D]">Direct canvas editing</p>
+                      <h3 className="mt-2 text-xl font-semibold text-[#1F2933]">Refine the first branch and crown</h3>
+                      <p className="mt-2 max-w-3xl text-sm leading-7 text-[#55705F]">
+                        Open the editor after reviewing the rendered diagrams. Drag a crown or first branch, resize from a corner, rotate the branch, undo with Ctrl+Z, then export a clean JPEG.
+                      </p>
+                    </div>
+                    <a
+                      className="inline-flex shrink-0 items-center justify-center rounded-full bg-[#1F5E3B] px-6 py-3 text-sm font-bold text-white transition hover:-translate-y-0.5"
+                        href="/profile-editor/index.html"
+                    >
+                      Open Profile Editor
+                    </a>
+                  </div>
+                </section>
               )}
             </SectionCard>
 

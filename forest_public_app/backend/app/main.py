@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import base64
 import copy
+import gc
 import hashlib
 import json
 import logging
 import os
+import shutil
 import sys
 import tempfile
 import threading
 import time
+import uuid
 from collections import OrderedDict
 from io import BytesIO
 from pathlib import Path
@@ -21,7 +24,7 @@ import pandas as pd
 from fastapi.encoders import jsonable_encoder
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.responses import FileResponse
 from openpyxl import load_workbook
 from pydantic import BaseModel
@@ -32,16 +35,23 @@ if str(ROOT_DIR) not in sys.path:
 WORKSPACE_DIR = ROOT_DIR if (ROOT_DIR / "cal_EIA").exists() else ROOT_DIR.parent
 
 import run_forest_calculation as calc
+from cal_EIA.generate_profile_realistic import render_editable_profile_scene, render_freeform_sprite_experiment
 PROFILE_SCRIPT_DIR = WORKSPACE_DIR / "cal_EIA" / "05_profile_scripts"
 if not PROFILE_SCRIPT_DIR.exists():
     PROFILE_SCRIPT_DIR = WORKSPACE_DIR / "cal_EIA"
 if str(PROFILE_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(PROFILE_SCRIPT_DIR))
-from profile_diagram_lib import create_profile_template, render_workbook_profile_map
+from profile_diagram_lib import (
+    audit_profile_sheet,
+    create_profile_template,
+    list_profile_sheets,
+    render_workbook_profile_map,
+)
 from forest_economic_report import (
     ECOSYSTEM_TOTAL_KEYS,
     _estimated_tree_count_from_density,
     _sum_ecosystem_detail,
+    _tree_density_per_rai_from_outputs,
     write_forest_economic_report,
 )
 from forest_ecosystem_loss import build_ecosystem_loss_detail_rows
@@ -52,11 +62,19 @@ MASTER_FILE = ROOT_DIR / "species_reference_master_v1.xlsx"
 COMPONENT_TEMPLATE_FILE = ROOT_DIR / "forest_component_7.xlsx"
 PROFILE_SOURCE_FILE = ROOT_DIR / "cal_EIA" / "profile.xlsx"
 PROFILE_TEMPLATE_FILE = ROOT_DIR / "cal_EIA" / "profile_template.xlsx"
+PROFILE_EDITOR_SCENES: OrderedDict[str, dict[str, Any]] = OrderedDict()
+PROFILE_EDITOR_SCENE_LOCK = threading.Lock()
+PROFILE_EDITOR_SCENE_LIMIT = 4
+PROFILE_GENERATION_JOBS: OrderedDict[str, dict[str, Any]] = OrderedDict()
+PROFILE_GENERATION_JOB_LOCK = threading.Lock()
+PROFILE_GENERATION_RENDER_LOCK = threading.Lock()
+PROFILE_GENERATION_JOB_LIMIT = 6
 OUTPUT_BASE_FILENAME = "forest_calculation_output.xlsx"
 SUMMARY_OUTPUT_FILENAME = "forest_summary.xlsx"
 DETAIL_OUTPUT_FILENAME = "forest_details.xlsx"
 COMPONENT_OUTPUT_FILENAME = "forest_components.xlsx"
 PROFILE_OUTPUT_FILENAME = "profile_diagram_outputs.zip"
+PROFILE_REALISTIC_OUTPUT_FILENAME = "profile_diagram_realistic_outputs.zip"
 ECONOMIC_OUTPUT_FILENAME = "forest_economic_report.xlsx"
 ECONOMIC_JSON_FILENAME = "forest_economic_report.json"
 WORKFLOW_CACHE_TTL_SECONDS = int(os.getenv("WORKFLOW_CACHE_TTL_SECONDS", "3600"))
@@ -311,16 +329,30 @@ def ensure_profile_template() -> Path:
     return PROFILE_TEMPLATE_FILE
 
 
-def build_profile_outputs(uploaded_filename: str, file_bytes: bytes) -> tuple[list[dict[str, str]], bytes]:
+def build_profile_outputs(
+    uploaded_filename: str,
+    file_bytes: bytes,
+    render_mode: str,
+) -> tuple[list[dict[str, str]], bytes, str, list[dict[str, object]]]:
     with tempfile.TemporaryDirectory() as tmp_dir:
         temp_dir = Path(tmp_dir)
-        # Keep the uploaded workbook path deterministic. The browser-provided
-        # filename is metadata only and must not control Excel engine detection.
-        uploaded_path = temp_dir / "uploaded_workbook.xlsx"
+        uploaded_path = temp_dir / uploaded_filename
         uploaded_path.write_bytes(file_bytes)
 
         output_dir = temp_dir / "profile_images"
-        rendered_items = render_workbook_profile_map(uploaded_path, output_dir)
+        sheet_names = list_profile_sheets(uploaded_path)
+        # Validate every named tree before drawing any output. This prevents a
+        # malformed row from being silently excluded from a generated profile.
+        validation = [audit_profile_sheet(uploaded_path, sheet_name) for sheet_name in sheet_names]
+        if render_mode == "realistic":
+            rendered_items = [
+                (sheet_name, render_freeform_sprite_experiment(uploaded_path, sheet_name, output_dir))
+                for sheet_name in sheet_names
+            ]
+            output_filename = PROFILE_REALISTIC_OUTPUT_FILENAME
+        else:
+            rendered_items = render_workbook_profile_map(uploaded_path, output_dir)
+            output_filename = PROFILE_OUTPUT_FILENAME
         payloads: list[dict[str, str]] = []
         image_paths: list[Path] = []
         for sheet_name, image_path in rendered_items:
@@ -333,11 +365,11 @@ def build_profile_outputs(uploaded_filename: str, file_bytes: bytes) -> tuple[li
                 }
             )
 
-        zip_path = temp_dir / PROFILE_OUTPUT_FILENAME
+        zip_path = temp_dir / output_filename
         with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as zip_file:
             for image_path in image_paths:
                 zip_file.write(image_path, arcname=image_path.name)
-        return payloads, zip_path.read_bytes()
+        return payloads, zip_path.read_bytes(), output_filename, validation
 
 
 def parse_sheet_groups(sheet_groups_raw: str | None) -> list[dict[str, object]] | None:
@@ -515,6 +547,9 @@ def build_economic_preview(bundle: dict[str, object], outputs: dict[str, pd.Data
                 "componentId": component_id,
                 "componentName": row.get("component_name"),
                 "componentAreaRai": row.get("component_area_rai"),
+                "treeDensityPerRai": _tree_density_per_rai_from_outputs(outputs, component_id),
+                "saplingDensityPerRai": regen_row.get("sapling_density_per_rai"),
+                "seedlingDensityPerRai": regen_row.get("seedling_density_per_rai"),
                 "estimatedTreeCount": _estimated_tree_count_from_density(outputs, component_id, row.get("component_area_rai")),
                 "estimatedSaplingCount": regen_row.get("sapling_estimated_count"),
                 "estimatedSeedlingCount": regen_row.get("seedling_estimated_count"),
@@ -601,7 +636,9 @@ def run_uploaded_workflow(
 ) -> tuple[bytes, bytes, bytes | None, dict[str, pd.DataFrame]]:
     with tempfile.TemporaryDirectory() as tmp_dir:
         temp_dir = Path(tmp_dir)
-        uploaded_path = temp_dir / uploaded_filename
+        # Keep the uploaded workbook path deterministic. The browser-provided
+        # filename is metadata only and must not control Excel engine detection.
+        uploaded_path = temp_dir / "uploaded_workbook.xlsx"
         uploaded_path.write_bytes(file_bytes)
 
         output_base = temp_dir / OUTPUT_BASE_FILENAME
@@ -714,6 +751,76 @@ async def inspect_profile_workbook(file: UploadFile = File(...)) -> dict[str, An
         "fileName": file.filename,
         "sheetNames": get_uploaded_sheet_names(file_bytes),
     }
+
+
+def build_profile_editor_scene_manifest(file_name: str, file_bytes: bytes) -> dict[str, Any]:
+    session_id = uuid.uuid4().hex
+    scene_root = Path(tempfile.mkdtemp(prefix=f"profile-editor-{session_id}-"))
+    assets: dict[str, Path] = {}
+    manifest_sheets: list[dict[str, Any]] = []
+    try:
+        uploaded_path = scene_root / file_name
+        uploaded_path.write_bytes(file_bytes)
+        for sheet_index, sheet_name in enumerate(list_profile_sheets(uploaded_path)):
+            rendered = render_editable_profile_scene(uploaded_path, sheet_name, scene_root / "editor_scene")
+            slug = f"sheet-{sheet_index + 1}"
+            base_key = f"{slug}/base.png"
+            assets[base_key] = Path(rendered["basePath"])
+            manifest_trees: list[dict[str, Any]] = []
+            for tree in rendered["trees"]:
+                tree_parts: dict[str, Any] = {}
+                for part_name, part in tree["parts"].items():
+                    asset_key = f"{slug}/tree-{tree['id']}-{part_name}.png"
+                    assets[asset_key] = Path(part["path"])
+                    tree_parts[part_name] = {
+                        "file": f"/api/profile/editor-scene/{session_id}/asset/{asset_key}",
+                        "x": part["x"], "y": part["y"], "w": part["w"], "h": part["h"],
+                    }
+                manifest_trees.append({"id": tree["id"], "species": tree["species"], "parts": tree_parts})
+            manifest_sheets.append({
+                "name": sheet_name,
+                "slug": slug,
+                "base": f"/api/profile/editor-scene/{session_id}/asset/{base_key}",
+                "width": rendered["width"],
+                "height": rendered["height"],
+                "trees": manifest_trees,
+            })
+            del rendered
+            gc.collect()
+        uploaded_path.unlink(missing_ok=True)
+        with PROFILE_EDITOR_SCENE_LOCK:
+            PROFILE_EDITOR_SCENES[session_id] = {"root": scene_root, "assets": assets}
+            while len(PROFILE_EDITOR_SCENES) > PROFILE_EDITOR_SCENE_LIMIT:
+                _, expired_scene = PROFILE_EDITOR_SCENES.popitem(last=False)
+                shutil.rmtree(expired_scene["root"], ignore_errors=True)
+    except Exception:
+        shutil.rmtree(scene_root, ignore_errors=True)
+        raise
+    return {"sessionId": session_id, "fileName": file_name, "sheets": manifest_sheets}
+
+
+@app.post("/api/profile/editor-scene")
+async def create_profile_editor_scene(file: UploadFile = File(...)) -> dict[str, Any]:
+    file_bytes = await file.read()
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Please upload a valid .xlsx file.")
+    try:
+        return build_profile_editor_scene_manifest(file.filename, file_bytes)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        LOG.exception("Failed to create profile editor scene.")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/profile/editor-scene/{session_id}/asset/{asset_path:path}")
+def profile_editor_scene_asset(session_id: str, asset_path: str) -> Response:
+    with PROFILE_EDITOR_SCENE_LOCK:
+        scene = PROFILE_EDITOR_SCENES.get(session_id)
+        asset_file = scene["assets"].get(asset_path) if scene else None
+    if asset_file is None or not asset_file.exists():
+        raise HTTPException(status_code=404, detail="Editor scene asset expired or was not found.")
+    return FileResponse(asset_file, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
 
 
 @app.post("/api/calculate")
@@ -830,22 +937,220 @@ async def calculate(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@app.post("/api/profile/calculate")
-async def calculate_profile(file: UploadFile = File(...)) -> dict[str, Any]:
-    file_bytes = await file.read()
-    if not file.filename or not file.filename.lower().endswith(".xlsx"):
-        raise HTTPException(status_code=400, detail="Please upload a valid .xlsx file.")
-
-    try:
-        images, zip_bytes = build_profile_outputs(file.filename, file_bytes)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
+def build_profile_calculation_response(file_name: str, file_bytes: bytes, render_mode: str) -> dict[str, Any]:
+    images, zip_bytes, output_filename, validation = build_profile_outputs(file_name, file_bytes, render_mode)
     return {
         "sheetNames": [item["sheetName"] for item in images],
+        "renderMode": render_mode,
         "images": images,
+        "validation": validation,
         "download": {
-            "filename": PROFILE_OUTPUT_FILENAME,
+            "filename": output_filename,
             "contentBase64": base64.b64encode(zip_bytes).decode("ascii"),
         },
     }
+
+
+def build_profile_output_files(
+    file_name: str,
+    file_bytes: bytes,
+    render_mode: str,
+    job_root: Path,
+) -> tuple[dict[str, Any], dict[str, tuple[Path, str]]]:
+    """Render a background job entirely to disk to stay inside small-instance memory limits."""
+    uploaded_path = job_root / file_name
+    uploaded_path.write_bytes(file_bytes)
+    output_dir = job_root / "profile_images"
+    sheet_names = list_profile_sheets(uploaded_path)
+    validation = [audit_profile_sheet(uploaded_path, sheet_name) for sheet_name in sheet_names]
+    rendered_items: list[tuple[str, Path]] = []
+    if render_mode == "realistic":
+        for sheet_name in sheet_names:
+            rendered_items.append(
+                (sheet_name, render_freeform_sprite_experiment(uploaded_path, sheet_name, output_dir))
+            )
+            gc.collect()
+        output_filename = PROFILE_REALISTIC_OUTPUT_FILENAME
+    else:
+        rendered_items = render_workbook_profile_map(uploaded_path, output_dir)
+        output_filename = PROFILE_OUTPUT_FILENAME
+
+    result_assets: dict[str, tuple[Path, str]] = {}
+    image_manifest: list[dict[str, str]] = []
+    for image_index, (sheet_name, image_path) in enumerate(rendered_items):
+        asset_key = f"profile-image-{image_index}.png"
+        result_assets[asset_key] = (image_path, "image/png")
+        image_manifest.append({
+            "sheetName": sheet_name,
+            "filename": image_path.name,
+            "file": asset_key,
+        })
+
+    zip_path = job_root / output_filename
+    with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as zip_file:
+        for _, image_path in rendered_items:
+            zip_file.write(image_path, arcname=image_path.name)
+    result_assets["profile-output.zip"] = (zip_path, "application/zip")
+    uploaded_path.unlink(missing_ok=True)
+    return {
+        "sheetNames": sheet_names,
+        "renderMode": render_mode,
+        "images": image_manifest,
+        "validation": validation,
+        "download": {
+            "filename": output_filename,
+            "file": "profile-output.zip",
+        },
+    }, result_assets
+
+
+@app.post("/api/profile/calculate")
+async def calculate_profile(
+    file: UploadFile = File(...),
+    render_mode: str = Form(default="graphic"),
+) -> dict[str, Any]:
+    file_bytes = await file.read()
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Please upload a valid .xlsx file.")
+    if render_mode not in {"graphic", "realistic"}:
+        raise HTTPException(status_code=400, detail="render_mode must be either 'graphic' or 'realistic'.")
+    try:
+        return build_profile_calculation_response(file.filename, file_bytes, render_mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+def run_profile_generation_job(job_id: str, file_name: str, file_bytes: bytes, render_mode: str) -> None:
+    job_root = Path(tempfile.mkdtemp(prefix=f"profile-job-{job_id}-"))
+    try:
+        with PROFILE_GENERATION_RENDER_LOCK:
+            with PROFILE_GENERATION_JOB_LOCK:
+                PROFILE_GENERATION_JOBS[job_id]["status"] = "rendering"
+            profile_manifest, result_assets = build_profile_output_files(
+                file_name,
+                file_bytes,
+                render_mode,
+                job_root,
+            )
+            for image in profile_manifest["images"]:
+                image["file"] = f"/api/profile/generation-job/{job_id}/asset/{image['file']}"
+            profile_manifest["download"]["file"] = (
+                f"/api/profile/generation-job/{job_id}/asset/{profile_manifest['download']['file']}"
+            )
+            gc.collect()
+            with PROFILE_GENERATION_JOB_LOCK:
+                PROFILE_GENERATION_JOBS[job_id]["status"] = "preparing_editor"
+            editor_scene = build_profile_editor_scene_manifest(file_name, file_bytes)
+        with PROFILE_GENERATION_JOB_LOCK:
+            PROFILE_GENERATION_JOBS[job_id].update({
+                "status": "ready",
+                "profile": profile_manifest,
+                "editorScene": editor_scene,
+                "resultAssets": result_assets,
+                "jobRoot": job_root,
+                "finishedAt": time.time(),
+            })
+    except Exception as exc:  # noqa: BLE001
+        shutil.rmtree(job_root, ignore_errors=True)
+        LOG.exception("Profile generation job %s failed.", job_id)
+        with PROFILE_GENERATION_JOB_LOCK:
+            PROFILE_GENERATION_JOBS[job_id].update({
+                "status": "failed",
+                "detail": str(exc),
+                "finishedAt": time.time(),
+            })
+
+
+@app.post("/api/profile/generation-job")
+async def create_profile_generation_job(
+    file: UploadFile = File(...),
+    render_mode: str = Form(default="graphic"),
+) -> dict[str, str]:
+    file_bytes = await file.read()
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Please upload a valid .xlsx file.")
+    if render_mode not in {"graphic", "realistic"}:
+        raise HTTPException(status_code=400, detail="render_mode must be either 'graphic' or 'realistic'.")
+    job_id = uuid.uuid4().hex
+    with PROFILE_GENERATION_JOB_LOCK:
+        PROFILE_GENERATION_JOBS[job_id] = {"status": "queued", "createdAt": time.time()}
+        while len(PROFILE_GENERATION_JOBS) > PROFILE_GENERATION_JOB_LIMIT:
+            _, expired_job = PROFILE_GENERATION_JOBS.popitem(last=False)
+            expired_root = expired_job.get("jobRoot")
+            if expired_root:
+                shutil.rmtree(expired_root, ignore_errors=True)
+    threading.Thread(
+        target=run_profile_generation_job,
+        args=(job_id, file.filename, file_bytes, render_mode),
+        daemon=True,
+    ).start()
+    return {"jobId": job_id, "status": "queued"}
+
+
+@app.get("/api/profile/generation-job/{job_id}")
+def get_profile_generation_job(job_id: str) -> dict[str, Any]:
+    with PROFILE_GENERATION_JOB_LOCK:
+        job = PROFILE_GENERATION_JOBS.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Profile generation job expired or was not found.")
+        return {key: value for key, value in job.items() if key not in {"resultAssets", "jobRoot"}}
+
+
+@app.get("/api/profile/generation-job/{job_id}/asset/{asset_key}")
+def get_profile_generation_asset(job_id: str, asset_key: str) -> Response:
+    with PROFILE_GENERATION_JOB_LOCK:
+        job = PROFILE_GENERATION_JOBS.get(job_id)
+        asset = job.get("resultAssets", {}).get(asset_key) if job else None
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Profile generation asset expired or was not found.")
+    asset_file, media_type = asset
+    if not asset_file.exists():
+        raise HTTPException(status_code=404, detail="Profile generation asset expired or was not found.")
+    return FileResponse(asset_file, media_type=media_type, headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.get("/api/profile/generation-job/{job_id}/editor-bundle")
+def get_profile_generation_editor_bundle(job_id: str) -> Response:
+    with PROFILE_GENERATION_JOB_LOCK:
+        job = PROFILE_GENERATION_JOBS.get(job_id)
+        editor_scene = job.get("editorScene") if job else None
+    if not editor_scene:
+        raise HTTPException(status_code=404, detail="Editable profile layers are not ready.")
+    session_id = editor_scene["sessionId"]
+    with PROFILE_EDITOR_SCENE_LOCK:
+        scene = PROFILE_EDITOR_SCENES.get(session_id)
+        assets = dict(scene["assets"]) if scene else None
+    if assets is None:
+        raise HTTPException(status_code=404, detail="Editable profile layers expired or were not found.")
+
+    url_prefix = f"/api/profile/editor-scene/{session_id}/asset/"
+    offset = 0
+    asset_records: list[dict[str, Any]] = []
+    for asset_key, asset_file in assets.items():
+        length = asset_file.stat().st_size
+        asset_records.append({
+            "url": f"{url_prefix}{asset_key}",
+            "offset": offset,
+            "length": length,
+        })
+        offset += length
+    header = json.dumps({"assets": asset_records}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+    def stream_bundle():
+        yield len(header).to_bytes(4, byteorder="big")
+        yield header
+        for asset_file in assets.values():
+            with asset_file.open("rb") as handle:
+                while chunk := handle.read(1024 * 1024):
+                    yield chunk
+
+    return StreamingResponse(
+        stream_bundle(),
+        media_type="application/octet-stream",
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "Content-Length": str(4 + len(header) + offset),
+        },
+    )

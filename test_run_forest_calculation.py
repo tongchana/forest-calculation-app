@@ -175,23 +175,41 @@ class ForestCalculationLogicTests(unittest.TestCase):
         self.assertAlmostEqual(row["sapling_per_rai"], 2 / total_area_rai)
         self.assertAlmostEqual(row["seedling_per_rai"], 10 / total_area_rai)
 
-    def test_sapling_dbh_summary_counts_rows_not_number_values(self):
+    def test_sapling_dbh_summary_uses_dbh_boundaries_and_counts_rows(self):
         sheets = {
             "DETAIL_VOLUME": pd.DataFrame(
                 [
                     {
                         "sheet_name": "SiteA",
                         "block_type": "Sapling",
-                        "Girth_cm": 20.0,
+                        "DBH_cm": 29.9,
+                        "Girth_cm": 100.0,
                         "Plot": "P1",
                         "Number": 99,
                     },
                     {
                         "sheet_name": "SiteA",
                         "block_type": "Sapling",
-                        "Girth_cm": 40.0,
+                        "DBH_cm": 30.0,
+                        "Girth_cm": 1.0,
                         "Plot": "P2",
                         "Number": None,
+                    },
+                    {
+                        "sheet_name": "SiteA",
+                        "block_type": "Sapling",
+                        "DBH_cm": 60.0,
+                        "Girth_cm": 1.0,
+                        "Plot": "P2",
+                        "Number": 50,
+                    },
+                    {
+                        "sheet_name": "SiteA",
+                        "block_type": "Sapling",
+                        "DBH_cm": 60.1,
+                        "Girth_cm": 1.0,
+                        "Plot": "P2",
+                        "Number": 50,
                     },
                 ]
             ),
@@ -200,9 +218,11 @@ class ForestCalculationLogicTests(unittest.TestCase):
         summary = calc.build_dbh_class_summary("SiteA", sheets, plot_area_ha=0.2, rai_per_hectare=5.0)
         sapling_rows = summary[summary["Block"] == "Sapling"].reset_index(drop=True)
 
+        self.assertEqual(sapling_rows.loc[0, "DBH Class"], "dbh < 30")
         self.assertEqual(float(sapling_rows.loc[0, "Total"]), 1.0)
-        self.assertEqual(float(sapling_rows.loc[1, "Total"]), 1.0)
-        self.assertEqual(float(sapling_rows.loc[3, "Total"]), 2.0)
+        self.assertEqual(float(sapling_rows.loc[1, "Total"]), 2.0)
+        self.assertEqual(float(sapling_rows.loc[2, "Total"]), 1.0)
+        self.assertEqual(float(sapling_rows.loc[3, "Total"]), 4.0)
 
 
 if __name__ == "__main__":

@@ -28,6 +28,21 @@ EXPECTED_COLUMNS = [
     "crown_y_minus",
 ]
 
+# A named tree row must be complete.  Previously incomplete rows were silently
+# dropped, which could make a species appear to disappear from a profile.
+PROFILE_NUMERIC_COLUMNS = [
+    "no",
+    "girth_cm",
+    "height_m",
+    "first_branch_m",
+    "x",
+    "y",
+    "crown_x_plus",
+    "crown_x_minus",
+    "crown_y_plus",
+    "crown_y_minus",
+]
+
 PLOT_PALETTE = [
     "#43a047",
     "#1e88e5",
@@ -49,6 +64,11 @@ PLOT_PALETTE = [
 
 PROFILE_CROWN_WIDTH_SCALE = 1.18
 PROFILE_CROWN_HEIGHT_SCALE = 0.7
+TRUNK_CROWN_OVERLAP_RATIO = 0.20
+FIRST_BRANCH_LENGTH_RATIO = 0.18
+FIRST_BRANCH_MIN_LENGTH = 0.45
+FIRST_BRANCH_MAX_LENGTH = 1.15
+FIRST_BRANCH_BUSH_SCALE = 1.56
 SIDE_PADDING_METERS = 4.6
 THAI_FONT_FILES = [
     Path(__file__).with_name("Sarabun-Regular.ttf"),
@@ -74,19 +94,49 @@ def load_profile_sheet(excel_path: Path, sheet_name: str) -> pd.DataFrame:
     raw = pd.read_excel(excel_path, sheet_name=sheet_name, header=[0, 1])
     raw.columns = EXPECTED_COLUMNS
     df = raw.copy()
-    df["species"] = df["species"].astype(str).str.strip()
-    for column in EXPECTED_COLUMNS:
-        if column != "species":
-            df[column] = pd.to_numeric(df[column], errors="coerce")
+    df["species"] = df["species"].fillna("").astype(str).str.strip()
+    for column in PROFILE_NUMERIC_COLUMNS:
+        df[column] = pd.to_numeric(df[column], errors="coerce")
 
-    df = df.dropna(subset=["species", "x", "y", "height_m"])
-    df = df[df["species"].ne("")]
-    return df.reset_index(drop=True)
+    named_tree_rows = df["species"].ne("")
+    incomplete_rows = named_tree_rows & df[PROFILE_NUMERIC_COLUMNS].isna().any(axis=1)
+    if incomplete_rows.any():
+        details = []
+        for row_index, row in df.loc[incomplete_rows].iterrows():
+            missing_columns = [
+                column
+                for column in PROFILE_NUMERIC_COLUMNS
+                if pd.isna(row[column])
+            ]
+            # Two header rows precede the DataFrame, so index 0 is Excel row 3.
+            details.append(
+                f"row {row_index + 3} ({row['species']}): {', '.join(missing_columns)}"
+            )
+        raise ValueError(
+            f"Sheet '{sheet_name}' has incomplete tree profile data: "
+            + "; ".join(details)
+        )
+
+    return df.loc[named_tree_rows].reset_index(drop=True)
+
+
+def audit_profile_sheet(excel_path: Path, sheet_name: str) -> dict[str, object]:
+    """Return the exact tree and species counts that will be rendered."""
+    df = load_profile_sheet(excel_path, sheet_name)
+    species = sorted(df["species"].unique().tolist())
+    return {
+        "sheetName": sheet_name,
+        "treeCount": int(len(df)),
+        "speciesCount": int(len(species)),
+        "species": species,
+    }
 
 
 def list_profile_sheets(excel_path: Path) -> list[str]:
-    workbook = pd.ExcelFile(excel_path)
-    return workbook.sheet_names
+    # Explicitly close the workbook so temporary uploaded files can be removed
+    # reliably on Windows after profile generation finishes.
+    with pd.ExcelFile(excel_path) as workbook:
+        return workbook.sheet_names
 
 
 def build_species_color_map(species_names: list[str]) -> dict[str, str]:
@@ -127,6 +177,15 @@ def compute_profile_limits(df: pd.DataFrame) -> tuple[float, float]:
     left = (df["x"] - df["crown_x_minus"] * PROFILE_CROWN_WIDTH_SCALE).min()
     right = (df["x"] + df["crown_x_plus"] * PROFILE_CROWN_WIDTH_SCALE).max()
     return float(left), float(right)
+
+
+def pick_first_branch_direction(row: pd.Series | pd.Index | object) -> float:
+    seed_value = f"{getattr(row, 'species', '')}|{getattr(row, 'no', '')}|{getattr(row, 'x', '')}|{getattr(row, 'y', '')}"
+    return -1.0 if sum(ord(char) for char in seed_value) % 2 == 0 else 1.0
+
+
+def compute_first_branch_length(crown_width: float) -> float:
+    return float(np.clip(crown_width * FIRST_BRANCH_LENGTH_RATIO, FIRST_BRANCH_MIN_LENGTH, FIRST_BRANCH_MAX_LENGTH))
 
 
 def add_bushy_crown(
@@ -174,11 +233,13 @@ def add_bushy_crown(
     ax.add_patch(patch)
 
 
-def draw_top_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) -> None:
-    x_min = float(np.floor(df["x"].min()))
-    x_max = float(np.ceil(df["x"].max()))
-    y_min = float(np.floor(df["y"].min()))
-    y_max = float(np.ceil(df["y"].max()))
+def draw_top_view(
+    ax: plt.Axes,
+    df: pd.DataFrame,
+    colors: dict[str, str],
+    *,
+    fit_to_plot: bool = False,
+) -> None:
     crown_left, crown_right, crown_bottom, crown_top = compute_top_view_limits(df)
 
     for row in df.itertuples(index=False):
@@ -186,6 +247,17 @@ def draw_top_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) -> Non
         crown_height = max(row.crown_y_plus + row.crown_y_minus, 0.2)
         crown_center_x = row.x + (row.crown_x_plus - row.crown_x_minus) / 2
         crown_center_y = row.y + (row.crown_y_plus - row.crown_y_minus) / 2
+        if fit_to_plot:
+            # Keep the entire irregular crown visible inside the 40 x 10 m
+            # survey frame. The stem marker remains at its measured position;
+            # only the plan-view crown artwork is shifted inward when its
+            # measured spread crosses a plot edge.
+            crown_width = min(crown_width, 40.0 / 1.16)
+            crown_height = min(crown_height, 10.0 / 1.16)
+            crown_radius_x = crown_width * 0.58
+            crown_radius_y = crown_height * 0.58
+            crown_center_x = float(np.clip(crown_center_x, crown_radius_x, 40.0 - crown_radius_x))
+            crown_center_y = float(np.clip(crown_center_y, crown_radius_y, 10.0 - crown_radius_y))
         add_bushy_crown(
             ax=ax,
             center_x=crown_center_x,
@@ -198,13 +270,11 @@ def draw_top_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) -> Non
         )
 
     ax.scatter(df["x"], df["y"], s=8, color="black", zorder=3)
-    plot_width = max(x_max - x_min, 1.0)
-    plot_height = max(y_max - y_min, 1.0)
     ax.add_patch(
         Rectangle(
-            (x_min, y_min),
-            plot_width,
-            plot_height,
+            (0.0, 0.0),
+            40.0,
+            10.0,
             fill=False,
             linewidth=1.8,
             edgecolor="black",
@@ -212,13 +282,20 @@ def draw_top_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) -> Non
         )
     )
     ax.set_xlim(np.floor(crown_left - SIDE_PADDING_METERS), np.ceil(crown_right + SIDE_PADDING_METERS))
-    ax.set_ylim(np.floor(crown_bottom - 1.0), np.ceil(crown_top + 1.0))
+    if fit_to_plot:
+        ax.set_ylim(-1.0, 11.0)
+    else:
+        ax.set_ylim(np.floor(crown_bottom - 1.0), np.ceil(crown_top + 1.0))
     ax.set_aspect("equal", adjustable="box")
     ax.set_xlabel("Distance (m.)")
     ax.set_ylabel("Distance (m.)")
     ax.grid(False)
     ax.set_xticks(np.arange(0, 41, 5))
-    ax.set_yticks(np.arange(0, np.ceil(crown_top + 1.0) + 1, 5))
+    ax.set_yticks(
+        np.arange(0, 11, 5)
+        if fit_to_plot
+        else np.arange(0, np.ceil(crown_top + 1.0) + 1, 5)
+    )
     ax.spines[["top", "right", "left", "bottom"]].set_visible(False)
 
 
@@ -235,7 +312,7 @@ def draw_profile_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) ->
     draw_df["crown_area"] = draw_df["crown_width"] * draw_df["crown_depth"]
 
     for row in draw_df.itertuples(index=False):
-        trunk_top_y = min(max(row.height_m - row.crown_depth, 0), 19.6)
+        trunk_top_y = min(max(row.height_m - row.crown_depth, 0) + row.crown_depth * TRUNK_CROWN_OVERLAP_RATIO, 19.6)
         ax.plot(
             [row.x, row.x],
             [0, trunk_top_y],
@@ -245,6 +322,36 @@ def draw_profile_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) ->
             zorder=2,
             solid_capstyle="round",
         )
+
+        if pd.notna(row.first_branch_m):
+            branch_origin_y = float(np.clip(row.first_branch_m, 0.45, max(row.height_m - 0.4, 0.45)))
+            branch_direction = pick_first_branch_direction(row)
+            branch_length = compute_first_branch_length(float(row.crown_width))
+            branch_dx = branch_length * np.cos(np.deg2rad(45)) * branch_direction
+            branch_dy = branch_length * np.sin(np.deg2rad(45))
+            branch_end_x = float(row.x + branch_dx)
+            branch_end_y = float(min(branch_origin_y + branch_dy, 19.65))
+            ax.plot(
+                [row.x, branch_end_x],
+                [branch_origin_y, branch_end_y],
+                color="#4e342e",
+                linewidth=max(float(row.trunk_width) * 0.45, 1.0),
+                alpha=0.95,
+                zorder=2.4,
+                solid_capstyle="round",
+            )
+            add_bushy_crown(
+                ax=ax,
+                center_x=branch_end_x,
+                center_y=branch_end_y,
+                width=max(branch_length * FIRST_BRANCH_BUSH_SCALE, 0.2),
+                height=max(branch_length * FIRST_BRANCH_BUSH_SCALE, 0.2),
+                color=colors[row.species],
+                edgecolor=colors[row.species],
+                linewidth=0.35,
+                alpha=0.8,
+                zorder=3.2,
+            )
 
     crown_df = draw_df.sort_values(["crown_area", "height_m"], ascending=[False, False])
     for row in crown_df.itertuples(index=False):
