@@ -314,7 +314,9 @@ def ensure_profile_template() -> Path:
 def build_profile_outputs(uploaded_filename: str, file_bytes: bytes) -> tuple[list[dict[str, str]], bytes]:
     with tempfile.TemporaryDirectory() as tmp_dir:
         temp_dir = Path(tmp_dir)
-        uploaded_path = temp_dir / uploaded_filename
+        # Keep the uploaded workbook path deterministic. The browser-provided
+        # filename is metadata only and must not control Excel engine detection.
+        uploaded_path = temp_dir / "uploaded_workbook.xlsx"
         uploaded_path.write_bytes(file_bytes)
 
         output_dir = temp_dir / "profile_images"

@@ -1,7 +1,7 @@
 fastapi==0.115.12
 uvicorn==0.34.0
 python-multipart==0.0.20
-pandas
-openpyxl
+pandas==2.3.3
+openpyxl==3.1.5
 numpy
 matplotlib
