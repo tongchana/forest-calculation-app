@@ -370,11 +370,11 @@ def validate_block_headers(sheet_name: str, row_headers: list[object], block_nam
 
 
 def read_sheet_frame(input_file: Path, sheet_name: str) -> pd.DataFrame:
-    return pd.read_excel(input_file, sheet_name=sheet_name, header=1, dtype=object)
+    return pd.read_excel(input_file, sheet_name=sheet_name, header=1, dtype=object, engine="openpyxl")
 
 
 def list_processable_sheet_names(input_file: Path) -> list[str]:
-    workbook_headers = pd.read_excel(input_file, sheet_name=None, header=None, nrows=2)
+    workbook_headers = pd.read_excel(input_file, sheet_name=None, header=None, nrows=2, engine="openpyxl")
     return [
         sheet_name
         for sheet_name, header_df in workbook_headers.items()
@@ -555,9 +555,9 @@ def get_component_display_name_map(sheets: dict[str, pd.DataFrame]) -> dict[str,
 
 
 def load_master_reference(master_file: Path) -> dict[str, dict[str, object]]:
-    xls = pd.ExcelFile(master_file)
-    taxon_df = pd.read_excel(master_file, sheet_name="taxon_master") if "taxon_master" in xls.sheet_names else pd.DataFrame()
-    alias_df = pd.read_excel(master_file, sheet_name="alias_map") if "alias_map" in xls.sheet_names else pd.DataFrame()
+    xls = pd.ExcelFile(master_file, engine="openpyxl")
+    taxon_df = pd.read_excel(master_file, sheet_name="taxon_master", engine="openpyxl") if "taxon_master" in xls.sheet_names else pd.DataFrame()
+    alias_df = pd.read_excel(master_file, sheet_name="alias_map", engine="openpyxl") if "alias_map" in xls.sheet_names else pd.DataFrame()
 
     if taxon_df.empty and alias_df.empty:
         raise ValueError("Master workbook must contain alias_map and/or taxon_master sheets.")
@@ -1548,7 +1548,7 @@ def process_workbook(
     ref_map = load_master_reference(master_file)
     LOG.info("Loaded %s species reference entries.", f"{len(ref_map):,}")
 
-    workbook_headers = pd.read_excel(input_file, sheet_name=None, header=None, nrows=2)
+    workbook_headers = pd.read_excel(input_file, sheet_name=None, header=None, nrows=2, engine="openpyxl")
     available_sheet_names = [
         sheet_name
         for sheet_name, header_df in workbook_headers.items()
