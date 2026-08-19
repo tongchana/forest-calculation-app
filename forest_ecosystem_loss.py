@@ -219,18 +219,36 @@ def calculate_ecosystem_impact_quantities(
     rainfall = annual_rainfall_mm
     topo = topography_score
     warming_term = (bdv / 100.0) * (rainfall / 1000.0) * topo
+
+    def non_negative(value: float) -> float:
+        """Forest-economic losses cannot be negative; floor model outputs at zero."""
+        return max(0.0, value)
+
     return EcosystemImpactQuantities(
-        wood_product_loss_m3_per_rai_per_year=-1.17 + (0.04 * bdv) + (0.0008 * rainfall) + (0.05 * topo),
-        soil_loss_kg_per_rai_per_year=-31.86 + (0.86 * bdv) + (0.04 * rainfall) + (0.52 * topo),
-        nitrogen_loss_kg_per_rai_per_year=-4.0 + (0.02 * bdv) + (0.0005 * rainfall) + (0.2 * topo),
-        phosphorus_loss_g_per_rai_per_year=-20.07 + (0.17 * bdv) + (0.0005 * rainfall) + (0.63 * topo),
-        potassium_loss_g_per_rai_per_year=-140.76 + (0.98 * bdv) + (0.012 * rainfall) + (3.89 * topo),
-        water_regulation_loss_m3_per_rai_per_year=(
-            -16.66 + (0.12 * bdv) + (0.017 * rainfall) + (0.81 * topo)
-        )
-        / 1.6,
-        temperature_increase_celsius=(-0.002 * pow(warming_term, 2)) + (0.11 * warming_term) + 0.517,
-        co2_absorption_loss_ton_per_rai_per_year=-0.38 + (0.018 * bdv) + (0.0015 * rainfall) + (0.12 * topo),
+        wood_product_loss_m3_per_rai_per_year=non_negative(
+            -1.17 + (0.04 * bdv) + (0.0008 * rainfall) + (0.05 * topo)
+        ),
+        soil_loss_kg_per_rai_per_year=non_negative(
+            -31.86 + (0.86 * bdv) + (0.04 * rainfall) + (0.52 * topo)
+        ),
+        nitrogen_loss_kg_per_rai_per_year=non_negative(
+            -4.0 + (0.02 * bdv) + (0.0005 * rainfall) + (0.2 * topo)
+        ),
+        phosphorus_loss_g_per_rai_per_year=non_negative(
+            -20.07 + (0.17 * bdv) + (0.0005 * rainfall) + (0.63 * topo)
+        ),
+        potassium_loss_g_per_rai_per_year=non_negative(
+            -140.76 + (0.98 * bdv) + (0.012 * rainfall) + (3.89 * topo)
+        ),
+        water_regulation_loss_m3_per_rai_per_year=non_negative(
+            (-16.66 + (0.12 * bdv) + (0.017 * rainfall) + (0.81 * topo)) / 1.6
+        ),
+        temperature_increase_celsius=non_negative(
+            (-0.002 * pow(warming_term, 2)) + (0.11 * warming_term) + 0.517
+        ),
+        co2_absorption_loss_ton_per_rai_per_year=non_negative(
+            -0.38 + (0.018 * bdv) + (0.0015 * rainfall) + (0.12 * topo)
+        ),
     )
 
 
