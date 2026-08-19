@@ -9,7 +9,7 @@ from forest_ecosystem_loss import (
     EcosystemComponentInput,
     EcosystemLossResult,
     aggregate_ecosystem_group_results,
-    calculate_basal_area_percent_from_ba_and_area,
+    calculate_basal_area_density_m2_per_ha_from_ba_and_area,
     calculate_ecosystem_loss_for_component,
 )
 from forest_economics import Component, Plot, TQRecord, calculate_forest_economics
@@ -239,7 +239,10 @@ def build_ecosystem_inputs_from_outputs(
                 continue
             sample_area_m2 = n_plots * plot_area_m2
             representative_area_rai = n_plots * plot_area_rai
-            basal_area_percent = calculate_basal_area_percent_from_ba_and_area(ba_m2_total, sample_area_m2)
+            basal_area_density_m2_per_ha = calculate_basal_area_density_m2_per_ha_from_ba_and_area(
+                ba_m2_total,
+                sample_area_m2,
+            )
             component_rows.append(
                 EcosystemComponentInput(
                     component_id=component_key,
@@ -253,7 +256,7 @@ def build_ecosystem_inputs_from_outputs(
                     soil_depth_m=spec.soil_depth_m,
                     annual_rainfall_mm=spec.annual_rainfall_mm,
                     topography_score=spec.topography_score,
-                    basal_area_percent=basal_area_percent,
+                    basal_area_density_m2_per_ha=basal_area_density_m2_per_ha,
                 )
             )
         if component_rows:

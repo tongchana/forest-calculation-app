@@ -72,7 +72,7 @@ class EcosystemComponentInput:
     soil_depth_m: float
     annual_rainfall_mm: float
     topography_score: float
-    basal_area_percent: float
+    basal_area_density_m2_per_ha: float
     forest_type: str | None = None
     component_area_rai: float | None = None
     representative_area_rai: float | None = None
@@ -112,7 +112,7 @@ class EcosystemLossResult:
     forest_type: str | None
     canopy_cover_percent: float
     canopy_layer_count: float
-    basal_area_percent: float
+    basal_area_density_m2_per_ha: float
     soil_depth_m: float
     annual_rainfall_mm: float
     topography_score: float
@@ -152,6 +152,18 @@ def calculate_basal_area_percent_from_ba_and_area(total_ba_m2: float, total_plot
     return (total_ba_m2 / total_plot_area_m2) * 100.0
 
 
+def calculate_basal_area_density_m2_per_ha_from_ba_and_area(
+    total_ba_m2: float,
+    total_plot_area_m2: float,
+) -> float:
+    """Return basal-area density in m²/ha without converting it to percent."""
+    if total_ba_m2 < 0:
+        raise ValueError("total_ba_m2 must be >= 0")
+    if total_plot_area_m2 <= 0:
+        raise ValueError("total_plot_area_m2 must be > 0")
+    return (total_ba_m2 / total_plot_area_m2) * M2_PER_HECTARE
+
+
 def calculate_basal_area_percent_from_plot_area_rai(total_ba_m2: float, total_plot_area_rai: float) -> float:
     return calculate_basal_area_percent_from_ba_and_area(total_ba_m2, total_plot_area_rai * M2_PER_RAI)
 
@@ -181,8 +193,8 @@ def validate_ecosystem_input(data: EcosystemComponentInput) -> list[str]:
         warnings.append("canopy_cover_percent must be between 0 and 100")
     if data.canopy_layer_count <= 0:
         warnings.append("canopy_layer_count must be > 0")
-    if data.basal_area_percent < 0:
-        warnings.append("basal_area_percent must be >= 0")
+    if data.basal_area_density_m2_per_ha < 0:
+        warnings.append("basal_area_density_m2_per_ha must be >= 0")
     if data.soil_depth_m <= 0:
         warnings.append("soil_depth_m must be > 0")
     if data.annual_rainfall_mm < 0:
@@ -194,7 +206,7 @@ def validate_ecosystem_input(data: EcosystemComponentInput) -> list[str]:
 
 def calculate_bdv(data: EcosystemComponentInput) -> float:
     return 0.45 * pow(10.46 + (0.11 * data.canopy_cover_percent * data.canopy_layer_count), 0.62) * pow(
-        25.16 + (45.26 * data.basal_area_percent * data.soil_depth_m),
+        25.16 + (45.26 * data.basal_area_density_m2_per_ha * data.soil_depth_m),
         0.59,
     )
 
@@ -243,7 +255,7 @@ def calculate_ecosystem_impact_values(
         nitrogen_value_baht_per_rai_per_year=quantities.nitrogen_loss_kg_per_rai_per_year * 1000.0 * ECOSYSTEM_UNIT_PRICES["nitrogen_baht_per_g"],
         phosphorus_value_baht_per_rai_per_year=quantities.phosphorus_loss_g_per_rai_per_year * ECOSYSTEM_UNIT_PRICES["phosphorus_baht_per_g"],
         potassium_value_baht_per_rai_per_year=(
-            quantities.potassium_loss_g_per_rai_per_year * ECOSYSTEM_UNIT_PRICES["potassium_baht_per_g"] / 1000.0
+            quantities.potassium_loss_g_per_rai_per_year * ECOSYSTEM_UNIT_PRICES["potassium_baht_per_g"]
         ),
         water_regulation_value_baht_per_rai_per_year=(
             quantities.water_regulation_loss_m3_per_rai_per_year / ECOSYSTEM_UNIT_PRICES["water_trip_m3"]
@@ -358,7 +370,7 @@ def calculate_ecosystem_loss_for_component(data: EcosystemComponentInput) -> Eco
         forest_type=data.forest_type,
         canopy_cover_percent=data.canopy_cover_percent,
         canopy_layer_count=data.canopy_layer_count,
-        basal_area_percent=data.basal_area_percent,
+        basal_area_density_m2_per_ha=data.basal_area_density_m2_per_ha,
         soil_depth_m=data.soil_depth_m,
         annual_rainfall_mm=data.annual_rainfall_mm,
         topography_score=data.topography_score,

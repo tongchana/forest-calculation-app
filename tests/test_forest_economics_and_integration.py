@@ -154,7 +154,7 @@ class ForestEconomicsAndIntegrationTests(unittest.TestCase):
         self.assertEqual({plot.forest_type for plot in component.related_plots}, {"ป่าเบญจพรรณ", "ป่าเต็งรัง"})
         self.assertTrue(warnings)
 
-    def test_build_ecosystem_inputs_from_outputs_derives_basal_area_percent_by_forest_type(self):
+    def test_build_ecosystem_inputs_from_outputs_derives_basal_area_density_by_forest_type(self):
         outputs = {
             "DETAIL_TREE_BIOMASS": pd.DataFrame(
                 [
@@ -211,7 +211,7 @@ class ForestEconomicsAndIntegrationTests(unittest.TestCase):
         self.assertIn("comp_internal", grouped_inputs)
         component_inputs = grouped_inputs["comp_internal"]
         self.assertEqual(len(component_inputs), 2)
-        ba_lookup = {item.forest_type: item.basal_area_percent for item in component_inputs}
+        ba_lookup = {item.forest_type: item.basal_area_density_m2_per_ha for item in component_inputs}
         self.assertGreater(ba_lookup["ป่าเบญจพรรณ"], ba_lookup["ป่าเต็งรัง"])
         self.assertTrue(warnings)
 
