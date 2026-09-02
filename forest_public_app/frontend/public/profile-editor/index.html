@@ -26,13 +26,14 @@
       <h1>Profile Diagram Editor</h1>
       <a class="back" href="/profile">กลับไปหน้า Profile Studio</a>
       <select id="profile" aria-label="เลือกแนวสำรวจ"></select>
+      <button id="randomize" type="button">สุ่มชุดต้นไม้ V3</button>
       <button id="export" type="button">Export JPEG</button>
     </header>
     <section class="stage">
       <canvas id="diagram" aria-label="แก้ไของค์ประกอบใน profile diagram"></canvas>
       <p class="loading" id="loading">กำลังเตรียม layer ของ profile...</p>
     </section>
-    <p class="hint">คลิกพุ่มหรือกิ่งเพื่อเลือก · ลากเพื่อย้าย · ลากมุมเพื่อย่อ–ขยายโดยคงสัดส่วน · ลากวงกลมเหนือกิ่งเพื่อหมุนกิ่งแรก · Ctrl+Z ย้อนกลับ · Ctrl+Shift+Z หรือ Ctrl+Y ทำซ้ำ · JPEG ที่ export จะไม่มีเส้นหรือจุดช่วยแก้ไข</p>
+    <p class="hint">คลิกพุ่มหรือกิ่งเพื่อเลือก · ลากมุมเพื่อย่อ–ขยายโดยคงสัดส่วน · ลาก handle ซ้าย/ขวาของ canopy เพื่อปรับกว้าง · ลาก handle บน/ล่างของ canopy เพื่อปรับสูง–ต่ำ · ลากวงกลมเหนือกิ่งเพื่อหมุนกิ่งแรก · ปุ่มสุ่ม V3 จะเปลี่ยนต้นทุกต้นที่เป็น species เดียวกัน · Ctrl+Z ย้อนกลับ · Ctrl+Shift+Z หรือ Ctrl+Y ทำซ้ำ · JPEG ที่ export จะไม่มีเส้นหรือจุดช่วยแก้ไข</p>
   </main>
   <script>
     const canvas = document.querySelector('#diagram');
@@ -40,6 +41,8 @@
     const select = document.querySelector('#profile');
     const loading = document.querySelector('#loading');
     const state = { manifest: null, sheet: null, images: {}, transforms: {}, selected: null, drag: null, showUI: true, scene: [], history: [], redo: [] };
+    const requestedSessionId = new URLSearchParams(window.location.search).get('session');
+    const v3Groups = ['01_yang_na','02_takhian_thong','03_teng','04_rang','05_hieng','06_daeng','07_pradu_pa','08_makha_mong','09_sak','10_inthanin_nam','11_phayung','12_makham','13_sadao','14_khanun','15_mamuang','16_sai_yoi','17_krissana','18_tabaek','19_krathon','20_pho'];
     const loadImage = (source) => new Promise((resolve, reject) => { const image = new Image(); image.onload = () => resolve(image); image.onerror = reject; image.src = source; });
     const assetUrl = (file) => `/profile-editor/scene-assets/${file}`;
     const dynamicColors = ['#58a55c', '#258ddb', '#8e24aa', '#f4511e', '#008f80', '#7b9e39'];
@@ -51,39 +54,93 @@
     function uploadedManifest(scene) { return { dynamic: true, sheets: scene.sheets.map((sheet) => ({ name: sheet.name, slug: sheet.slug, trees: sheet.trees.map((tree, index) => { const sprite = index % 17; const x = 435 + ((tree.x + 5) / 50) * 3560; const ground = 3300; const height = Math.max(260, Math.min(2050, tree.height * 95)); const crownW = Math.max(190, Math.min(760, (tree.crownXPlus + tree.crownXMinus) * 92)); const crownH = Math.max(110, Math.min(620, (tree.height - tree.firstBranch) * 55)); const crownY = ground - height; return { ...tree, color: dynamicColors[index % dynamicColors.length], parts: { trunk: { file: `tree_${sprite}_trunk.png`, x: x - Math.max(20, height * .045), y: crownY + crownH * .28, w: Math.max(40, height * .09), h: ground - (crownY + crownH * .28) }, branch: { file: `tree_${sprite}_branch.png`, x: x - crownW * .22, y: ground - Math.max(180, tree.firstBranch * 95) - crownH * .18, w: crownW * .44, h: Math.max(90, crownH * .38) }, crown: { file: `tree_${sprite}_crown.png`, x: x - crownW / 2, y: crownY, w: crownW, h: crownH } } }; }) })) }; }
     function drawUploadedBase(sheet) { context.fillStyle = 'white'; context.fillRect(0, 0, canvas.width, canvas.height); context.strokeStyle = '#1a1a1a'; context.lineWidth = 6; context.strokeRect(435, 420, 3560, 790); context.font = '38px Noto Sans Thai, sans-serif'; context.fillStyle = '#222'; context.fillText('แผนผังเรือนยอด', 435, 360); const species = [...new Set(sheet.trees.map((tree) => tree.species))]; sheet.trees.forEach((tree) => { const x = 435 + ((tree.x + 5) / 50) * 3560; const y = 815 + Math.max(-260, Math.min(260, tree.y * 40)); context.fillStyle = tree.color; context.globalAlpha = .55; context.beginPath(); context.ellipse(x, y, Math.max(70, (tree.crownXPlus + tree.crownXMinus) * 45), Math.max(55, (tree.crownYPlus + tree.crownYMinus) * 38), 0, 0, Math.PI * 2); context.fill(); context.globalAlpha = 1; context.fillStyle = '#111'; context.beginPath(); context.arc(x, y, 8, 0, Math.PI * 2); context.fill(); }); context.fillStyle = '#222'; context.fillText('ภาพด้านข้าง', 435, 1470); context.strokeStyle = '#d5d5d5'; context.lineWidth = 2; for (let x = 435; x <= 3995; x += 71.2) { context.beginPath(); context.moveTo(x, 1560); context.lineTo(x, 3300); context.stroke(); } for (let y = 1560; y <= 3300; y += 87) { context.beginPath(); context.moveTo(435, y); context.lineTo(3995, y); context.stroke(); } context.strokeStyle = '#6b7280'; context.lineWidth = 5; context.beginPath(); context.moveTo(435, 3300); context.lineTo(3995, 3300); context.stroke(); context.font = '30px Noto Sans Thai, sans-serif'; species.forEach((name, index) => { const x = 500 + index * Math.max(460, 3300 / Math.max(species.length, 1)); context.fillStyle = dynamicColors[index % dynamicColors.length]; context.fillRect(x, 3820, 32, 32); context.fillStyle = '#222'; context.fillText(name, x + 48, 3848); }); }
     const transformId = (tree, part) => `${state.sheet.slug}:${tree.id}:${part}`;
-    function transformFor(tree, part) { return state.transforms[transformId(tree, part)] ?? (state.transforms[transformId(tree, part)] = { dx: 0, dy: 0, scale: 1, rotate: 0 }); }
-    function bounds(tree, part) {
-      const layer = tree.parts[part]; const transform = transformFor(tree, part);
-      return { x: layer.x + transform.dx - layer.w * (transform.scale - 1) / 2, y: layer.y + transform.dy - layer.h * (transform.scale - 1) / 2, w: layer.w * transform.scale, h: layer.h * transform.scale, rotate: transform.rotate };
+    function transformFor(tree, part) {
+      const key = transformId(tree, part);
+      const transform = state.transforms[key] ?? (state.transforms[key] = { dx: 0, dy: 0, scale: 1, rotate: 0, widthScale: 1, heightScale: 1, bendYRatio: null, bendXRatio: 0 });
+      if (transform.widthScale == null) transform.widthScale = 1;
+      if (transform.heightScale == null) transform.heightScale = 1;
+      if (!Object.prototype.hasOwnProperty.call(transform, 'bendYRatio')) transform.bendYRatio = null;
+      if (transform.bendXRatio == null) transform.bendXRatio = 0;
+      return transform;
     }
-    function drawLayer(image, box) { context.save(); context.translate(box.x + box.w / 2, box.y + box.h / 2); context.rotate(box.rotate * Math.PI / 180); context.drawImage(image, -box.w / 2, -box.h / 2, box.w, box.h); context.restore(); }
+    function bounds(tree, part) {
+      const layer = tree.parts[part]; const transform = transformFor(tree, part); const widthScale = (part === 'trunk' || part === 'crown') ? transform.widthScale || 1 : 1; const heightScale = part === 'crown' ? transform.heightScale || 1 : 1;
+      return { x: layer.x + transform.dx - layer.w * (transform.scale * widthScale - 1) / 2, y: layer.y + transform.dy - layer.h * (transform.scale * heightScale - 1) / 2, w: layer.w * transform.scale * widthScale, h: layer.h * transform.scale * heightScale, rotate: transform.rotate };
+    }
+    function drawLayer(image, box, transform, part) {
+      if (!image) return;
+      if (part === 'trunk' && transform.bendYRatio !== null && Math.abs(transform.bendXRatio || 0) > .001) {
+        const slices = 72;
+        const sourceSlice = image.height / slices;
+        const destinationSlice = box.h / slices;
+        const bend = (transform.bendXRatio || 0) * box.h;
+        const eased = (progress) => {
+          if (progress <= transform.bendYRatio) return bend;
+          const t = Math.max(0, Math.min(1, (progress - transform.bendYRatio) / Math.max(1 - transform.bendYRatio, .01)));
+          return bend * (1 - t * t * (3 - 2 * t));
+        };
+        for (let index = 0; index < slices; index += 1) {
+          const progress = (index + .5) / slices;
+          const next = Math.min(1, progress + 1 / slices);
+          const offset = eased(progress);
+          const nextOffset = eased(next);
+          context.save();
+          context.translate(box.x + box.w / 2 + offset, box.y + (index + .5) * destinationSlice);
+          context.rotate(Math.atan2(nextOffset - offset, destinationSlice) + box.rotate * Math.PI / 180);
+          context.drawImage(image, 0, index * sourceSlice, image.width, sourceSlice + 1.5, -box.w / 2, -(destinationSlice + 2) / 2, box.w, destinationSlice + 2);
+          context.restore();
+        }
+        return;
+      }
+      context.save();
+      context.translate(box.x + box.w / 2, box.y + box.h / 2);
+      context.rotate(box.rotate * Math.PI / 180);
+      context.drawImage(image, -box.w / 2, -box.h / 2, box.w, box.h);
+      context.restore();
+    }
     function drawHandles(item) {
       const box = item.box; context.save(); context.translate(box.x + box.w / 2, box.y + box.h / 2); context.rotate(box.rotate * Math.PI / 180);
       context.strokeStyle = '#ef6c32'; context.lineWidth = 5; context.setLineDash([14, 9]); context.strokeRect(-box.w / 2, -box.h / 2, box.w, box.h); context.setLineDash([]); context.fillStyle = '#fff';
       for (const corner of [[-box.w / 2, -box.h / 2], [box.w / 2, -box.h / 2], [-box.w / 2, box.h / 2], [box.w / 2, box.h / 2]]) { context.fillRect(corner[0] - 11, corner[1] - 11, 22, 22); context.strokeRect(corner[0] - 11, corner[1] - 11, 22, 22); }
       if (item.part === 'branch') { context.beginPath(); context.arc(0, -box.h / 2 - 46, 15, 0, Math.PI * 2); context.fill(); context.stroke(); context.beginPath(); context.moveTo(0, -box.h / 2); context.lineTo(0, -box.h / 2 - 30); context.stroke(); }
+      if (item.part === 'trunk') { context.fillStyle = '#ef6c32'; for (const x of [-box.w / 2, box.w / 2]) { context.beginPath(); context.arc(x, -box.h / 2 + 28, 16, 0, Math.PI * 2); context.fill(); context.stroke(); } const transform = transformFor(item.tree, item.part); if (transform.bendYRatio !== null) { context.beginPath(); context.arc((transform.bendXRatio || 0) * box.h, -box.h / 2 + transform.bendYRatio * box.h, 17, 0, Math.PI * 2); context.fill(); context.stroke(); } }
+      if (item.part === 'crown') { context.fillStyle = '#ef6c32'; for (const [x, y] of [[-box.w / 2, 0], [box.w / 2, 0], [0, -box.h / 2], [0, box.h / 2]]) { context.beginPath(); context.arc(x, y, 16, 0, Math.PI * 2); context.fill(); context.stroke(); } }
       context.restore();
     }
     function render() {
       if (!state.sheet) return; context.clearRect(0, 0, canvas.width, canvas.height); if (state.manifest.rendered || state.manifest.serverScene) context.drawImage(state.images[state.sheet.base], 0, 0); else if (state.manifest.dynamic) drawUploadedBase(state.sheet); else context.drawImage(state.images[state.sheet.base], 0, 0); state.scene = [];
-      for (const part of ['trunk', 'branch', 'crown']) for (const tree of state.sheet.trees) { const layer = tree.parts[part]; if (!layer?.file) continue; const box = bounds(tree, part); const imageKey = state.manifest.serverScene ? layer.file : `${state.manifest.dynamic ? 'profile1' : state.sheet.slug}/${layer.file}`; drawLayer(state.images[imageKey], box); if (part !== 'trunk') state.scene.push({ tree, part, box }); }
+      const selectedKey = state.selected ? transformId(state.selected.tree, state.selected.part) : null;
+      for (const part of ['trunk', 'branch', 'crown']) for (const tree of state.sheet.trees) { const layer = tree.parts[part]; if (!layer?.file) continue; const box = bounds(tree, part), transform = transformFor(tree, part); const imageKey = state.manifest.serverScene ? layer.file : `${state.manifest.dynamic ? 'profile1' : state.sheet.slug}/${layer.file}`; drawLayer(state.images[imageKey], box, transform, part); state.scene.push({ tree, part, box }); }
+      if (selectedKey) state.selected = state.scene.find((item) => transformId(item.tree, item.part) === selectedKey) || null;
       if (state.showUI && state.selected) drawHandles(state.selected);
     }
     function pointerPosition(event) { const rect = canvas.getBoundingClientRect(); return { x: (event.clientX - rect.left) * canvas.width / rect.width, y: (event.clientY - rect.top) * canvas.height / rect.height }; }
     function localPosition(point, item) { const box = item.box; const angle = -box.rotate * Math.PI / 180; const dx = point.x - box.x - box.w / 2; const dy = point.y - box.y - box.h / 2; return { x: dx * Math.cos(angle) - dy * Math.sin(angle), y: dx * Math.sin(angle) + dy * Math.cos(angle) }; }
-    function hitHandle(point, item) { const local = localPosition(point, item); const box = item.box; if (item.part === 'branch' && Math.hypot(local.x, local.y + box.h / 2 + 46) < 26) return 'rotate'; for (const corner of [[-box.w / 2, -box.h / 2], [box.w / 2, -box.h / 2], [-box.w / 2, box.h / 2], [box.w / 2, box.h / 2]]) if (Math.abs(local.x - corner[0]) < 26 && Math.abs(local.y - corner[1]) < 26) return 'scale'; return null; }
+    function hitHandle(point, item) { const local = localPosition(point, item); const box = item.box; const transform = transformFor(item.tree, item.part); if (item.part === 'branch' && Math.hypot(local.x, local.y + box.h / 2 + 46) < 26) return 'rotate'; if (item.part === 'trunk' && transform.bendYRatio !== null && Math.hypot(local.x - (transform.bendXRatio || 0) * box.h, local.y - (-box.h / 2 + transform.bendYRatio * box.h)) < 30) return 'bend'; if (item.part === 'trunk' && Math.abs(local.y + box.h / 2 - 28) < 30 && Math.abs(Math.abs(local.x) - box.w / 2) < 30) return 'width'; if (item.part === 'crown' && Math.abs(local.y) < 30 && Math.abs(Math.abs(local.x) - box.w / 2) < 30) return 'width'; if (item.part === 'crown' && Math.abs(local.x) < 30 && Math.abs(Math.abs(local.y) - box.h / 2) < 30) return 'height'; for (const corner of [[-box.w / 2, -box.h / 2], [box.w / 2, -box.h / 2], [-box.w / 2, box.h / 2], [box.w / 2, box.h / 2]]) if (Math.abs(local.x - corner[0]) < 26 && Math.abs(local.y - corner[1]) < 26) return 'scale'; return null; }
     canvas.addEventListener('pointerdown', (event) => {
       const point = pointerPosition(event); let item = null; let mode = null; if (state.selected) { mode = hitHandle(point, state.selected); if (mode) item = state.selected; }
       if (!item) { item = [...state.scene].reverse().find((candidate) => { const local = localPosition(point, candidate); return Math.abs(local.x) <= candidate.box.w / 2 && Math.abs(local.y) <= candidate.box.h / 2; }); mode = 'move'; }
       if (!item) { state.selected = null; render(); return; }
-      state.selected = item; const transform = transformFor(item.tree, item.part); const box = item.box; state.drag = { mode, point, dx: transform.dx, dy: transform.dy, scale: transform.scale, rotate: transform.rotate, cx: box.x + box.w / 2, cy: box.y + box.h / 2, distance: Math.hypot(point.x - box.x - box.w / 2, point.y - box.y - box.h / 2), angle: Math.atan2(point.y - box.y - box.h / 2, point.x - box.x - box.w / 2), key: transformId(item.tree, item.part), before: { ...transform } }; canvas.setPointerCapture(event.pointerId); render();
+      state.selected = item; const transform = transformFor(item.tree, item.part); const box = item.box; state.drag = { mode, point, dx: transform.dx, dy: transform.dy, scale: transform.scale, rotate: transform.rotate, widthScale: transform.widthScale || 1, heightScale: transform.heightScale || 1, cx: box.x + box.w / 2, cy: box.y + box.h / 2, distance: Math.hypot(point.x - box.x - box.w / 2, point.y - box.y - box.h / 2), angle: Math.atan2(point.y - box.y - box.h / 2, point.x - box.x - box.w / 2), key: transformId(item.tree, item.part), before: { ...transform } }; canvas.setPointerCapture(event.pointerId); render();
     });
-    canvas.addEventListener('pointermove', (event) => { if (!state.drag || !state.selected) return; const point = pointerPosition(event); const drag = state.drag; const transform = transformFor(state.selected.tree, state.selected.part); if (drag.mode === 'move') { transform.dx = drag.dx + point.x - drag.point.x; transform.dy = drag.dy + point.y - drag.point.y; } else if (drag.mode === 'scale') { transform.scale = Math.max(.25, Math.min(3, drag.scale * Math.hypot(point.x - drag.cx, point.y - drag.cy) / Math.max(drag.distance, 1))); } else { transform.rotate = drag.rotate + (Math.atan2(point.y - drag.cy, point.x - drag.cx) - drag.angle) * 180 / Math.PI; } render(); });
+    canvas.addEventListener('pointermove', (event) => { if (!state.drag || !state.selected) return; const point = pointerPosition(event); const drag = state.drag; const transform = transformFor(state.selected.tree, state.selected.part); if (drag.mode === 'move') { transform.dx = drag.dx + point.x - drag.point.x; transform.dy = drag.dy + point.y - drag.point.y; } else if (drag.mode === 'scale') { transform.scale = Math.max(.2, Math.min(12, drag.scale * Math.hypot(point.x - drag.cx, point.y - drag.cy) / Math.max(drag.distance, 1))); } else if (drag.mode === 'width') { transform.widthScale = Math.max(.25, Math.min(12, drag.widthScale * Math.abs(point.x - drag.cx) / Math.max(Math.abs(drag.point.x - drag.cx), 1))); } else if (drag.mode === 'height') { transform.heightScale = Math.max(.25, Math.min(12, drag.heightScale * Math.abs(point.y - drag.cy) / Math.max(Math.abs(drag.point.y - drag.cy), 1))); } else if (drag.mode === 'bend') { transform.bendXRatio = Math.max(-.55, Math.min(.55, (point.x - drag.cx) / Math.max(state.selected.box.h, 1))); } else { transform.rotate = drag.rotate + (Math.atan2(point.y - drag.cy, point.x - drag.cx) - drag.angle) * 180 / Math.PI; } render(); });
     canvas.addEventListener('pointerup', (event) => { if (state.drag && state.selected) { const after = { ...transformFor(state.selected.tree, state.selected.part) }; if (JSON.stringify(state.drag.before) !== JSON.stringify(after)) { state.history.push({ key: state.drag.key, before: state.drag.before, after }); state.redo = []; saveTransforms(); } state.drag = null; } if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId); });
+    canvas.addEventListener('dblclick', (event) => { const point = pointerPosition(event); const item = [...state.scene].reverse().find((candidate) => candidate.part === 'trunk' && Math.abs(point.x - candidate.box.x - candidate.box.w / 2) <= candidate.box.w * 2 && point.y >= candidate.box.y && point.y <= candidate.box.y + candidate.box.h); if (!item) return; const transform = transformFor(item.tree, 'trunk'); transform.bendYRatio = Math.max(.08, Math.min(.92, (point.y - item.box.y) / item.box.h)); transform.bendXRatio = 0; state.selected = item; saveTransforms(); render(); });
+    function groupAssetUrl(group, part) { const file = part === 'branch' ? 'first_branch.png' : part === 'crown' ? 'canopy_side.png' : 'trunk.png'; return `/api/profile/assets/${group}/${file}`; }
+    async function randomizeSelectedTree() { if (!state.manifest?.serverScene) return; if (!state.selected) { loading.hidden = false; loading.textContent = 'เลือก trunk, branch หรือ canopy ของต้นที่ต้องการสุ่มก่อน'; setTimeout(() => { if (state.manifest?.serverScene && !state.selected) loading.hidden = true; }, 1800); return; } const tree = state.selected.tree; const species = tree.species; const matchingTrees = state.manifest.sheets.flatMap((sheet) => sheet.trees.filter((candidate) => candidate.species === species)); const group = v3Groups[Math.floor(Math.random() * v3Groups.length)]; const groupUrls = Object.fromEntries(['trunk', 'branch', 'crown'].map((part) => [part, groupAssetUrl(group, part)])); await Promise.all(Object.values(groupUrls).map(async (url) => { if (!state.images[url]) state.images[url] = await loadImage(url); })); for (const matchingTree of matchingTrees) { for (const part of ['trunk', 'branch', 'crown']) { const layer = matchingTree.parts[part]; if (layer) layer.file = groupUrls[part]; } matchingTree.assetGroup = group; } loading.hidden = false; loading.textContent = `สุ่ม ${species} เป็นชุด V3 เดียวกันแล้ว ${matchingTrees.length} ต้น`; setTimeout(() => { loading.hidden = true; }, 1800); render(); }
+    document.querySelector('#randomize').addEventListener('click', () => { randomizeSelectedTree().catch((error) => { loading.textContent = `เปลี่ยนชุดต้นไม้ไม่สำเร็จ: ${error.message}`; }); });
     document.addEventListener('keydown', (event) => { if (!event.ctrlKey && !event.metaKey) return; const key = event.key.toLowerCase(); const isRedo = key === 'y' || (key === 'z' && event.shiftKey); if (key !== 'z' && key !== 'y') return; event.preventDefault(); const source = isRedo ? state.redo : state.history; const destination = isRedo ? state.history : state.redo; const action = source.pop(); if (!action) return; state.transforms[action.key] = { ...(isRedo ? action.after : action.before) }; destination.push(action); saveTransforms(); render(); });
     document.querySelector('#export').addEventListener('click', () => { const selected = state.selected; state.showUI = false; render(); canvas.toBlob((blob) => { if (blob) { const url = URL.createObjectURL(blob); const download = document.createElement('a'); const safeName = state.sheet.name.replace(/[^\p{L}\p{N}_-]+/gu, '_'); download.download = `profile_${safeName}_final.jpg`; download.href = url; download.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); } state.showUI = true; state.selected = selected; render(); }, 'image/jpeg', .98); });
     async function useSheet() { state.sheet = state.manifest.sheets.find((sheet) => sheet.slug === select.value); const files = state.manifest.serverScene ? [state.sheet.base, ...state.sheet.trees.flatMap((tree) => Object.values(tree.parts).map((part) => part.file))] : state.manifest.rendered ? [state.sheet.base] : state.manifest.dynamic ? [...new Set(state.sheet.trees.flatMap((tree) => Object.values(tree.parts).map((part) => `profile1/${part.file}`)))] : [state.sheet.base, ...state.sheet.trees.flatMap((tree) => Object.values(tree.parts).filter((part) => part.file).map((part) => `${state.sheet.slug}/${part.file}`))]; await Promise.all(files.map(async (file) => { state.images[file] = await loadImage(state.manifest.serverScene || state.manifest.rendered ? file : assetUrl(file)); })); if (state.manifest.dynamic) { canvas.width = 4350; canvas.height = 4200; } else { const base = state.images[state.sheet.base]; canvas.width = base.width; canvas.height = base.height; } state.selected = null; loading.hidden = true; render(); }
-    readServerScene().then((serverScene) => serverScene ? { ...serverScene, serverScene: true } : readRenderedProfiles().then((rendered) => rendered ? { rendered: true, sheets: rendered.map((item, index) => ({ name: item.sheetName, slug: `render-${index}`, base: item.imageDataUrl, trees: [] })) } : readUploadedScene().then((scene) => scene ? uploadedManifest(scene) : fetch('/profile-editor/scene-assets/scene-manifest.json').then((response) => { if (!response.ok) throw new Error('ไม่พบ scene assets'); return response.json(); })))).then(async (manifest) => { state.manifest = manifest; const key = transformStorageKey(); if (key) { try { state.transforms = JSON.parse(localStorage.getItem(key) || '{}'); } catch { state.transforms = {}; } } for (const sheet of manifest.sheets) select.add(new Option(sheet.name, sheet.slug)); select.addEventListener('change', useSheet); await useSheet(); }).catch((error) => { loading.textContent = `เปิด scene ไม่สำเร็จ: ${error.message}`; });
+    readServerScene().then(async (serverScene) => {
+      if (requestedSessionId) {
+        if (serverScene?.sessionId === requestedSessionId) return { ...serverScene, serverScene: true };
+        const response = await fetch(`/api/profile/editor-scene/${encodeURIComponent(requestedSessionId)}`);
+        if (!response.ok) throw new Error('ไม่พบ scene ของไฟล์ล่าสุด กรุณากลับไปหน้า Profile Studio แล้วกดเปิด editor ใหม่');
+        return { ...(await response.json()), serverScene: true };
+      }
+      return serverScene ? { ...serverScene, serverScene: true } : readRenderedProfiles().then((rendered) => rendered ? { rendered: true, sheets: rendered.map((item, index) => ({ name: item.sheetName, slug: `render-${index}`, base: item.imageDataUrl, trees: [] })) } : readUploadedScene().then((scene) => scene ? uploadedManifest(scene) : fetch('/profile-editor/scene-assets/scene-manifest.json').then((response) => { if (!response.ok) throw new Error('ไม่พบ scene assets'); return response.json(); })));
+    }).then(async (manifest) => { state.manifest = manifest; const key = transformStorageKey(); if (key) { try { state.transforms = JSON.parse(localStorage.getItem(key) || '{}'); } catch { state.transforms = {}; } } for (const sheet of manifest.sheets) select.add(new Option(sheet.name, sheet.slug)); select.addEventListener('change', useSheet); await useSheet(); }).catch((error) => { loading.textContent = `เปิด scene ไม่สำเร็จ: ${error.message}`; });
   </script>
 </body>
 </html>

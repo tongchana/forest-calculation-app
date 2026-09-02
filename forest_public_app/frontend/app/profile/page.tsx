@@ -4,7 +4,7 @@ import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "re
 import * as XLSX from "xlsx";
 import { API_BASE_URL, describeApiError } from "@/app/lib/api-base";
 import { clearWorkspace, readWorkspace, saveWorkspace } from "@/app/lib/workspace-session";
-import { readProfileEditorScene, readProfileResult, readWorkspaceFile, saveProfileEditorRender, saveProfileEditorScene, saveProfileEditorServerScene, saveProfileResult, saveWorkspaceFile, type ProfileEditorScene, type ProfileEditorServerScene, type ProfileEditorTree } from "@/app/lib/workspace-file";
+import { readProfileEditorScene, readProfileEditorServerScene, readProfileResult, readWorkspaceFile, saveProfileEditorRender, saveProfileEditorScene, saveProfileEditorServerScene, saveProfileResult, saveWorkspaceFile, type ProfileEditorScene, type ProfileEditorServerScene, type ProfileEditorTree } from "@/app/lib/workspace-file";
 import {
   AppHeader,
   DownloadButton,
@@ -69,6 +69,7 @@ type ProfileWorkspaceState = {
   sheetNames: string[];
   result: ProfileResponse | null;
   renderMode: RenderMode;
+  editorSessionId?: string | null;
   message: string | null;
   error: string | null;
 };
@@ -165,18 +166,21 @@ export default function ProfilePage() {
   const [dragActive, setDragActive] = useState(false);
   const [message, setMessage] = useState<string | null>(savedWorkspace?.message ?? null);
   const [error, setError] = useState<string | null>(savedWorkspace?.error ?? null);
+  const [editorSessionId, setEditorSessionId] = useState<string | null>(savedWorkspace?.editorSessionId ?? null);
   const [activeStepId, setActiveStepId] = useState<(typeof profileSectionIds)[number]>("download-template");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const workspaceRevisionRef = useRef(0);
 
   useEffect(() => {
-    saveWorkspace<ProfileWorkspaceState>("profile", { workbookFile, sheetNames, result, renderMode, message, error });
-  }, [workbookFile, sheetNames, result, renderMode, message, error]);
+    saveWorkspace<ProfileWorkspaceState>("profile", { workbookFile, sheetNames, result, renderMode, editorSessionId, message, error });
+  }, [workbookFile, sheetNames, result, renderMode, editorSessionId, message, error]);
 
   useEffect(() => {
     if (workbookFile) return;
-    void Promise.all([readWorkspaceFile("profile"), readProfileEditorScene(), readProfileResult<ProfileResponse>()]).then(([file, scene, storedResult]) => {
+    void Promise.all([readWorkspaceFile("profile"), readProfileEditorScene(), readProfileEditorServerScene(), readProfileResult<ProfileResponse>()]).then(([file, scene, serverScene, storedResult]) => {
       if (!file) return;
       setWorkbookFile(file);
+      setEditorSessionId(serverScene?.sessionId ?? null);
       if (storedResult) {
         setResult(storedResult);
         setRenderMode(storedResult.renderMode);
@@ -310,13 +314,27 @@ export default function ProfilePage() {
       setError("Please upload a .xlsx profile workbook.");
       return;
     }
+    const revision = workspaceRevisionRef.current + 1;
+    workspaceRevisionRef.current = revision;
+    if (editorSessionId) localStorage.removeItem(`profile-editor-transforms:${editorSessionId}`);
     setWorkbookFile(file);
-    void saveWorkspaceFile("profile", file);
-    void saveProfileEditorRender(null);
-    void saveProfileEditorServerScene(null);
-    void saveProfileResult<ProfileResponse>(null);
-    if (file) void buildProfileEditorScene(file).then((scene) => saveProfileEditorScene(scene)).catch(() => saveProfileEditorScene(null));
-    else void saveProfileEditorScene(null);
+    setEditorSessionId(null);
+    void Promise.all([
+      saveWorkspaceFile("profile", file),
+      saveProfileEditorRender(null),
+      saveProfileEditorServerScene(null),
+      saveProfileResult<ProfileResponse>(null),
+      saveProfileEditorScene(null),
+    ]).then(() => {
+      if (!file || revision !== workspaceRevisionRef.current) return;
+      return buildProfileEditorScene(file).then((scene) => {
+        if (revision === workspaceRevisionRef.current) return saveProfileEditorScene(scene);
+        return undefined;
+      });
+    }).catch(() => {
+      if (revision === workspaceRevisionRef.current) return saveProfileEditorScene(null);
+      return undefined;
+    });
     setResult(null);
     setError(null);
     setMessage(null);
@@ -329,7 +347,9 @@ export default function ProfilePage() {
 
   function clearCurrentWorkspace() {
     if (!window.confirm("Clear the uploaded workbook and rendered profile outputs from this Profile workspace?")) return;
+    workspaceRevisionRef.current += 1;
     clearWorkspace("profile");
+    setEditorSessionId(null);
     void saveWorkspaceFile("profile", null);
     void saveProfileEditorScene(null);
     void saveProfileEditorRender(null);
@@ -481,6 +501,7 @@ export default function ProfilePage() {
       await saveProfileEditorServerScene(persistentScene);
       await saveProfileEditorRender(null);
       await saveProfileResult(data);
+      setEditorSessionId(persistentScene.sessionId);
       setResult(data);
       const auditSummary = data.validation
         .map((sheet) => `${sheet.sheetName}: ${sheet.treeCount} trees, ${sheet.speciesCount} species`)
@@ -723,7 +744,7 @@ export default function ProfilePage() {
                     </div>
                     <a
                       className="inline-flex shrink-0 items-center justify-center rounded-full bg-[#1F5E3B] px-6 py-3 text-sm font-bold text-white transition hover:-translate-y-0.5"
-                        href="/profile-editor/index.html"
+                        href={editorSessionId ? `/profile-editor/index.html?session=${encodeURIComponent(editorSessionId)}` : "/profile-editor/index.html"}
                     >
                       Open Profile Editor
                     </a>

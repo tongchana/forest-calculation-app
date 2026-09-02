@@ -114,6 +114,17 @@ export async function saveProfileEditorServerScene(scene: ProfileEditorServerSce
   database.close();
 }
 
+export async function readProfileEditorServerScene(): Promise<ProfileEditorServerScene | null> {
+  const database = await openDatabase();
+  const value = await new Promise<ProfileEditorServerScene | null>((resolve, reject) => {
+    const request = database.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).get(PROFILE_EDITOR_SERVER_SCENE_KEY);
+    request.onsuccess = () => resolve(request.result?.sessionId ? request.result as ProfileEditorServerScene : null);
+    request.onerror = () => reject(request.error);
+  });
+  database.close();
+  return value;
+}
+
 export async function saveProfileResult<T>(result: T | null) {
   const database = await openDatabase();
   await new Promise<void>((resolve, reject) => {

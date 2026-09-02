@@ -2,22 +2,24 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 
 import matplotlib
-matplotlib.use("Agg")
+matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
+from matplotlib.patches import Rectangle
 from matplotlib.transforms import Affine2D, blended_transform_factory
 from PIL import Image
 
 from cal_EIA.profile_diagram_lib import (
     PROFILE_CROWN_HEIGHT_SCALE,
     PROFILE_CROWN_WIDTH_SCALE,
+    SIDE_PADDING_METERS,
     TRUNK_CROWN_OVERLAP_RATIO,
     build_species_color_map,
+    compute_profile_limits,
     configure_matplotlib,
     draw_top_view,
     get_thai_font_properties,
@@ -27,6 +29,10 @@ from cal_EIA.profile_diagram_lib import (
 
 # Bundled with the deployment so the realistic renderer has no machine-specific paths.
 ASSET_FOLDER = Path(__file__).with_name("profile_assets")
+EDITOR_ASSET_ROOTS = [
+    Path(__file__).with_name("profile_assets_v2") / "normalized",
+    Path(__file__).with_name("profile_assets_v3") / "normalized",
+]
 ASSET_RANDOM_SEED_OFFSET = 20260623
 # 0.36 was the shortened experimental crown scale; raise it by 40% for the current profile series.
 LOCAL_CROWN_HEIGHT_REDUCTION = 0.504
@@ -80,7 +86,6 @@ def remove_checkerboard_background(rgba: np.ndarray) -> np.ndarray:
     return crop_rgba_to_alpha_bbox(cleaned)
 
 
-@lru_cache(maxsize=1)
 def load_branch_assets() -> list[SpriteAsset]:
     candidates = [
         path
@@ -143,7 +148,6 @@ def build_asset(name: str, rgba: np.ndarray) -> SpriteAsset:
     )
 
 
-@lru_cache(maxsize=1)
 def load_assets() -> tuple[list[SpriteAsset], list[SpriteAsset]]:
     # Discover transparent sprites by geometry, not by file name. This keeps new
     # crown/trunk exports usable even when they retain their original image names.
@@ -162,7 +166,7 @@ def load_assets() -> tuple[list[SpriteAsset], list[SpriteAsset]]:
         and asset.height_px >= 70
         and asset.core_width_fraction >= 0.42
         and asset.core_height_fraction >= 0.34
-        # Forked trunks are narrow (about 0.36 here); crowns begin well above that.
+        # Crowns begin well above the narrow trunk geometry.
         and 0.75 <= asset.aspect_ratio <= 3.4
     ]
 
@@ -172,7 +176,7 @@ def load_assets() -> tuple[list[SpriteAsset], list[SpriteAsset]]:
         for asset in all_assets
         if asset.width_px >= 18
         and asset.height_px >= 120
-        # Allow a forked top while keeping trunk sprites distinct from crown masses.
+        # Keep trunk sprites distinct from crown masses.
         and asset.aspect_ratio <= 0.42
         and asset.core_height_fraction >= 0.82
     ]
@@ -208,85 +212,23 @@ def build_species_label_map(draw_df) -> dict[str, str]:
     return labels
 
 
-def layout_profile_labels(ordered_df, min_horizontal_gap_m: float = 1.6) -> dict[int, tuple[float, int]]:
-    """Pack tree labels into non-overlapping rows without changing tree positions."""
-    layout: dict[int, tuple[float, int]] = {}
-    # Keep an approximate text width as well as position; two anchors can be
-    # far enough apart while their multi-species labels still touch.
-    last_item_by_row: list[tuple[float, float]] = []
-
+def layout_profile_labels(ordered_df, cluster_gap_m: float = 0.75) -> dict[int, tuple[float, int]]:
+    """Use two rows and small local offsets to keep labels legible in dense x clusters."""
+    groups: list[list[object]] = []
     for row in ordered_df.itertuples():
-        x_position = float(row.x)
-        label_half_width_m = max(0.45, 0.18 * len(str(row.label)) + 0.22)
-        row_index = next(
-            (
-                index
-                for index, (previous_x, previous_half_width_m) in enumerate(last_item_by_row)
-                if x_position - previous_x >= max(
-                    min_horizontal_gap_m,
-                    previous_half_width_m + label_half_width_m + 0.20,
-                )
-            ),
-            None,
-        )
-        if row_index is None:
-            row_index = len(last_item_by_row)
-            last_item_by_row.append((x_position, label_half_width_m))
+        if not groups or float(row.x) - float(groups[-1][-1].x) > cluster_gap_m:
+            groups.append([row])
         else:
-            last_item_by_row[row_index] = (x_position, label_half_width_m)
-        layout[int(row.index)] = (x_position, row_index)
+            groups[-1].append(row)
 
+    layout: dict[int, tuple[float, int]] = {}
+    for group in groups:
+        count = len(group)
+        # The offsets only move the annotation, never the tree or its measured x position.
+        offsets = np.linspace(-0.34 * (count - 1) / 2, 0.34 * (count - 1) / 2, count)
+        for position, (row, offset) in enumerate(zip(group, offsets)):
+            layout[int(row.index)] = (float(row.x) + float(offset), position % 2)
     return layout
-
-
-def build_profile_label_annotations(
-    ordered_df,
-    label_map: dict[int, str],
-    projected_cluster_width_m: float = 1.6,
-):
-    """Summarise labels by the visible X-projection, not hidden Y positions.
-
-    A profile is a side view: trees at different Y coordinates can occupy the
-    same visual column.  Group close X positions into one compact annotation so
-    the label count reflects what can actually be distinguished in the view.
-    """
-    annotation_rows: list[dict[str, object]] = []
-    ordered_by_x = ordered_df.sort_values(["x", "height_m"], ascending=[True, False])
-    cluster_start_x: float | None = None
-    clusters: list[list[object]] = []
-
-    for row in ordered_by_x.itertuples():
-        x_position = float(row.x)
-        if cluster_start_x is None or x_position - cluster_start_x >= projected_cluster_width_m:
-            clusters.append([])
-            cluster_start_x = x_position
-        clusters[-1].append(row)
-
-    for rows in clusters:
-        representative = rows[0]
-        labels_in_position = [label_map[int(row.index)] for row in rows]
-        cluster_x = float(np.mean([float(row.x) for row in rows]))
-        label_counts: dict[str, int] = {}
-        for label in labels_in_position:
-            label_counts[label] = label_counts.get(label, 0) + 1
-        label_tokens = [
-            f"{label}\u00d7{count}" if count > 1 else label
-            for label, count in label_counts.items()
-        ]
-        if len(label_tokens) <= 3:
-            annotation = " / ".join(label_tokens)
-        else:
-            displayed_tree_count = sum(list(label_counts.values())[:2])
-            annotation = " / ".join(label_tokens[:2]) + f" +{len(rows) - displayed_tree_count}"
-
-        annotation_rows.append(
-            {
-                "index": int(representative.index),
-                "x": cluster_x,
-                "label": annotation,
-            }
-        )
-    return ordered_df.__class__(annotation_rows)
 
 
 def build_species_style_map(
@@ -320,6 +262,51 @@ def build_species_style_map(
         if branch_assets:
             style_map[species]["branch"] = branch_assets[int(rng.integers(0, len(branch_assets)))]
     return style_map
+
+
+def load_editor_asset_group(asset_roots: list[Path], group_id: str) -> dict[str, SpriteAsset] | None:
+    """Load one coherent V3 trunk/branch/canopy group for an edited tree."""
+    for root in asset_roots:
+        group_dir = root / group_id
+        paths = {
+            "trunk": group_dir / "trunk.png",
+            "branch": group_dir / "first_branch.png",
+            "crown": group_dir / "canopy_side.png",
+        }
+        if not all(path.is_file() for path in paths.values()):
+            continue
+        return {
+            "trunk": build_asset(f"{group_id}::trunk", load_rgba(paths["trunk"])),
+            "branch": build_asset(f"{group_id}::branch", load_rgba(paths["branch"])),
+            "crown": build_asset(f"{group_id}::crown", load_rgba(paths["crown"])),
+        }
+    return None
+
+
+def build_editor_tree_styles(
+    draw_df,
+    asset_assignments: dict[int, str] | None,
+    asset_roots: list[Path] | None,
+    fallback_styles: dict[str, dict[str, SpriteAsset]],
+) -> dict[int, dict[str, SpriteAsset]]:
+    if not asset_assignments or not asset_roots:
+        return {}
+    styles: dict[int, dict[str, SpriteAsset]] = {}
+    for row in draw_df.itertuples():
+        group_id = asset_assignments.get(int(row.Index))
+        if not group_id:
+            continue
+        group = load_editor_asset_group(asset_roots, str(group_id))
+        if group is None:
+            continue
+        styles[int(row.Index)] = {
+            "tall_crown": group["crown"],
+            "medium_crown": group["crown"],
+            "short_crown": group["crown"],
+            "trunk": group["trunk"],
+            "branch": group["branch"],
+        }
+    return styles
 
 
 def choose_species_crown_asset(
@@ -544,20 +531,25 @@ def draw_tree(
     ax: plt.Axes,
     row,
     species_style_map: dict[str, dict[str, SpriteAsset]],
-    visible_parts: set[str] | None = None,
+    tree_style_map: dict[int, dict[str, SpriteAsset]] | None = None,
+    tree_transform_map: dict[int, dict[str, object]] | None = None,
 ) -> dict[str, object]:
-    visible_parts = visible_parts or {"trunk", "branch", "crown"}
-    part_artists: dict[str, object] = {}
-    crown_width = float(row.crown_width)
-    crown_depth = float(row.crown_depth)
+    artists: dict[str, object] = {}
+    editor_transform = (tree_transform_map or {}).get(int(row.Index), {})
+    editor_scale = float(np.clip(float(editor_transform.get("scale", 1.0) or 1.0), 0.2, 12.0))
+    editor_width_scale = float(np.clip(float(editor_transform.get("widthScale", 1.0) or 1.0), 0.25, 12.0))
+    crown_width_scale = float(np.clip(float(editor_transform.get("crownWidthScale", 1.0) or 1.0), 0.25, 12.0))
+    crown_height_scale = float(np.clip(float(editor_transform.get("crownHeightScale", 1.0) or 1.0), 0.25, 12.0))
+    editor_dx = float(editor_transform.get("dx", 0.0) or 0.0) / 30.0
+    editor_dy = -float(editor_transform.get("dy", 0.0) or 0.0) / 30.0
+    crown_width = float(row.crown_width) * editor_scale * crown_width_scale
+    crown_depth = float(row.crown_depth) * editor_scale * crown_height_scale
     crown_base_y = float(max(row.height_m - crown_depth, 0.0))
-    # The trunk must reach its own crown base. Capping it at a fixed height
-    # disconnects tall trees from their crowns and makes them appear to float.
-    trunk_top_y = float(crown_base_y + crown_depth * TRUNK_CROWN_OVERLAP_RATIO)
-    crown_center_x = float(row.x + (row.crown_x_plus - row.crown_x_minus) / 2)
-    crown_center_y = float(crown_base_y + crown_depth / 2)
+    trunk_top_y = float(min(crown_base_y + crown_depth * TRUNK_CROWN_OVERLAP_RATIO, 19.6))
+    crown_center_x = float(row.x + (row.crown_x_plus - row.crown_x_minus) / 2 + editor_dx)
+    crown_center_y = float(crown_base_y + crown_depth / 2 + editor_dy)
 
-    species_style = species_style_map[str(row.species)]
+    species_style = (tree_style_map or {}).get(int(row.Index), species_style_map[str(row.species)])
     crown_asset = choose_species_crown_asset(species_style, crown_width=crown_width, crown_depth=crown_depth)
     trunk_asset = species_style["trunk"]
     branch_asset = species_style.get("branch")
@@ -571,22 +563,20 @@ def draw_tree(
     crown_display_height = float(np.clip(crown_depth * crown_height_scale * 0.92, crown_depth * 0.9, crown_depth * 1.24))
 
     trunk_display_height = max(trunk_top_y, 0.45)
-    # Keep emergent-tree trunks legible through the lower canopy. Without this,
-    # their measured height can look truncated when shorter crowns overlap them.
-    trunk_zorder = 3.18 if trunk_display_height >= 15.0 else 2.15
     trunk_display_width = float(
         np.clip(
-            trunk_display_height * trunk_asset.aspect_ratio * 1.16,
+            trunk_display_height * trunk_asset.aspect_ratio * 1.16 * editor_width_scale,
             0.10,
             crown_display_width * 0.14,
         )
     )
-    trunk_x_left = float(row.x - trunk_asset.bottom_anchor_x * trunk_display_width)
+    trunk_x_left = float(row.x + editor_dx - trunk_asset.bottom_anchor_x * trunk_display_width)
 
     crown_x_left = float(crown_center_x - crown_display_width / 2)
     crown_bottom_y = max(crown_center_y - crown_display_height / 2, 0.0)
-    desired_shift = crown_center_x - float(row.x)
-    trunk_top_shift = float(np.clip(desired_shift, -trunk_display_width * 1.5, trunk_display_width * 1.5))
+    desired_shift = crown_center_x - float(row.x + editor_dx)
+    editor_bend_x = float(editor_transform.get("bendXRatio", 0.0) or 0.0)
+    trunk_top_shift = float(np.clip(desired_shift + editor_bend_x * trunk_display_height, -trunk_display_width * 2.5, trunk_display_width * 2.5))
     crown_bottom_shift = float(np.clip(-trunk_top_shift * 0.26, -crown_display_width * 0.08, crown_display_width * 0.08))
     crown_top_shift = float(np.clip(trunk_top_shift * 0.14, -crown_display_width * 0.06, crown_display_width * 0.06))
 
@@ -599,20 +589,18 @@ def draw_tree(
         bend_end_fraction=0.80,
     )
     warped_trunk_x_left = float(row.x - warped_trunk_asset.bottom_anchor_x * warped_trunk_display_width)
-    if "trunk" in visible_parts:
-        part_artists["trunk"] = draw_sheared_image(
-            ax=ax,
-            image_rgba=warped_trunk_asset.rgba,
-            x_left=warped_trunk_x_left,
-            bottom_y=0.0,
-            width=warped_trunk_display_width,
-            height=trunk_display_height,
-            zorder=trunk_zorder,
-            alpha_scale=0.98,
-        )
-
-    if branch_asset is not None and "branch" in visible_parts:
-        branch_y = float(np.clip(row.first_branch_m, 0.8, max(trunk_display_height - 0.4, 0.8)))
+    artists["trunk"] = draw_sheared_image(
+        ax=ax,
+        image_rgba=warped_trunk_asset.rgba,
+        x_left=warped_trunk_x_left,
+        bottom_y=0.0,
+        width=warped_trunk_display_width,
+        height=trunk_display_height,
+        zorder=2.15,
+        alpha_scale=0.98,
+    )
+    if branch_asset is not None:
+        branch_y = float(np.clip(row.first_branch_m + editor_dy, 0.8, max(trunk_display_height - 0.4, 0.8)))
         branch_center_shift = compute_bend_shift(
             branch_y=branch_y,
             trunk_display_height=trunk_display_height,
@@ -623,14 +611,14 @@ def draw_tree(
         )
         branch_rng = np.random.default_rng(ASSET_RANDOM_SEED_OFFSET + 9000 + int(row.Index))
         branch_side = -1 if int(branch_rng.integers(0, 2)) == 0 else 1
-        branch_attach_x = float(row.x + branch_center_shift + branch_side * trunk_display_width * 0.05)
+        branch_attach_x = float(row.x + editor_dx + branch_center_shift + branch_side * trunk_display_width * 0.05)
         branch_width = float(np.clip(crown_display_width * 0.32, 0.75, 2.35))
         branch_height = float(np.clip(branch_width / max(branch_asset.aspect_ratio, 0.2), 0.65, 2.0))
         crown_lean_angle = np.degrees(np.arctan2(desired_shift, trunk_display_height)) * 0.35
-        branch_angle = float(np.clip(branch_side * branch_rng.uniform(9.0, 15.0) + crown_lean_angle, -18.0, 18.0))
+        branch_angle = float(np.clip(branch_side * branch_rng.uniform(9.0, 15.0) + crown_lean_angle + float(editor_transform.get("rotate", 0.0) or 0.0), -45.0, 45.0))
         branch_anchor_x_fraction = branch_asset.bottom_anchor_x
         branch_x_left = float(branch_attach_x - branch_width * branch_anchor_x_fraction)
-        part_artists["branch"] = draw_rotated_image(
+        artists["branch"] = draw_rotated_image(
             ax=ax,
             image_rgba=match_branch_foliage_to_crown(branch_asset.rgba, crown_asset.rgba),
             x_left=branch_x_left,
@@ -644,20 +632,19 @@ def draw_tree(
             alpha_scale=0.98,
         )
 
-    if "crown" in visible_parts:
-        part_artists["crown"] = draw_sheared_image(
-            ax=ax,
-            image_rgba=crown_asset.rgba,
-            x_left=crown_x_left,
-            bottom_y=crown_bottom_y,
-            width=crown_display_width,
-            height=min(crown_display_height, 20.0),
-            zorder=3.05,
-            bottom_shift_x=crown_bottom_shift,
-            top_shift_x=crown_top_shift,
-            alpha_scale=0.98,
-        )
-    return part_artists
+    artists["crown"] = draw_sheared_image(
+        ax=ax,
+        image_rgba=crown_asset.rgba,
+        x_left=crown_x_left,
+        bottom_y=crown_bottom_y,
+        width=crown_display_width,
+        height=min(crown_display_height, 20.0),
+        zorder=3.05,
+        bottom_shift_x=crown_bottom_shift,
+        top_shift_x=crown_top_shift,
+        alpha_scale=0.98,
+    )
+    return artists
 
 
 def estimate_tree_profile_top(
@@ -669,7 +656,11 @@ def estimate_tree_profile_top(
     crown_base_y = float(max(row.height_m - crown_depth, 0.0))
     crown_center_y = float(crown_base_y + crown_depth / 2)
 
-    species_style = species_style_map[str(row.species)]
+    species_style = (
+        species_style_map
+        if "tall_crown" in species_style_map
+        else species_style_map[str(row.species)]
+    )
     crown_asset = choose_species_crown_asset(species_style, crown_width=crown_width, crown_depth=crown_depth)
     crown_height_scale = 1.0 / crown_asset.core_height_fraction
     crown_display_height = float(np.clip(crown_depth * crown_height_scale * 0.92, crown_depth * 0.9, crown_depth * 1.24))
@@ -681,13 +672,16 @@ def render_freeform_sprite_experiment(
     excel_path: Path,
     sheet_name: str,
     output_dir: Path,
-    *,
+    asset_assignments: dict[int, str] | None = None,
+    tree_transform_map: dict[int, dict[str, object]] | None = None,
+    top_transform_map: dict[int, dict[str, object]] | None = None,
+    asset_roots: list[Path] | None = None,
     visible_tree_indices: set[int] | None = None,
-    visible_parts: set[str] | None = None,
     layer_mode: bool = False,
-    dpi: int = 300,
-    output_suffix: str = "freeform_sprite_experiment",
     capture_layer_parts: list[dict[str, object]] | None = None,
+    output_suffix: str = "freeform_sprite_experiment",
+    dpi: int = 220,
+    tight_bbox: bool = True,
 ) -> Path:
     configure_matplotlib()
     df = load_profile_sheet(excel_path, sheet_name)
@@ -703,6 +697,13 @@ def render_freeform_sprite_experiment(
         * LOCAL_CROWN_HEIGHT_REDUCTION
     ).clip(lower=0.8)
 
+    # Keep short survey sheets legible in the shared 20 m profile frame while
+    # preserving the relative height of every tree within that sheet.
+    tallest_height = float(draw_df["height_m"].max())
+    visual_height_scale = max(1.0, min(20.0 / max(tallest_height, 0.1), 2.5))
+    draw_df["height_m"] *= visual_height_scale
+    draw_df["first_branch_m"] *= visual_height_scale
+
     ordered_for_labels = draw_df.sort_values(["x", "height_m"], ascending=[True, False]).reset_index()
     species_label_map = build_species_label_map(draw_df)
     legend_label_map = {
@@ -713,9 +714,8 @@ def render_freeform_sprite_experiment(
         int(row["index"]): species_label_map[str(row["species"])]
         for _, row in ordered_for_labels.iterrows()
     }
-    label_annotations = build_profile_label_annotations(ordered_for_labels, label_map)
-    label_layout_map = layout_profile_labels(label_annotations)
-    label_row_count = max((row_index for _, row_index in label_layout_map.values()), default=0) + 1
+    label_layout_map = layout_profile_labels(ordered_for_labels)
+    draw_df["tree_label"] = draw_df.index.map(label_map)
 
     crown_assets, trunk_assets = load_assets()
     branch_assets = load_branch_assets()
@@ -725,61 +725,86 @@ def render_freeform_sprite_experiment(
         trunk_assets=trunk_assets,
         branch_assets=branch_assets,
     )
+    editor_tree_styles = build_editor_tree_styles(
+        draw_df,
+        asset_assignments=asset_assignments,
+        asset_roots=asset_roots,
+        fallback_styles=species_style_map,
+    )
 
-    figure = plt.figure(figsize=(14.5, 14.5))
-    grid = figure.add_gridspec(nrows=3, ncols=1, height_ratios=[1.0, 1.08, 0.72])
+    top_draw_df = draw_df.copy()
+    for index, transform in (top_transform_map or {}).items():
+        if index not in top_draw_df.index:
+            continue
+        top_draw_df.loc[index, "x"] += float(transform.get("dx", 0.0) or 0.0) / 30.0
+        top_draw_df.loc[index, "y"] -= float(transform.get("dy", 0.0) or 0.0) / 30.0
+
+    figure = plt.figure(figsize=(14.5, 13.2))
+    grid = figure.add_gridspec(nrows=3, ncols=1, height_ratios=[1.0, 1.08, 0.4])
     top_ax = figure.add_subplot(grid[0])
     profile_ax = figure.add_subplot(grid[1])
     legend_ax = figure.add_subplot(grid[2])
-    tree_part_artists: dict[int, dict[str, object]] = {}
 
-    if not layer_mode:
-        draw_top_view(top_ax, draw_df, colors, fit_to_plot=True)
+    draw_top_view(top_ax, top_draw_df, colors)
+    for patch in list(top_ax.patches):
+        if isinstance(patch, Rectangle):
+            patch.remove()
+    top_ax.add_patch(Rectangle((0.0, 0.0), 40.0, 10.0, fill=False, linewidth=1.8, edgecolor="black", zorder=4, transform=top_ax.transData))
+    existing_x_left, existing_x_right = top_ax.get_xlim()
+    existing_y_bottom, existing_y_top = top_ax.get_ylim()
+    top_ax.set_xlim(min(-5.0, existing_x_left), max(45.0, existing_x_right))
+    top_ax.set_ylim(min(-5.0, existing_y_bottom), max(15.0, existing_y_top))
+    top_ax.set_aspect("auto")
+    top_ax.set_xticks(np.arange(0, 41, 5))
+    top_ax.set_yticks(np.arange(0, 11, 5))
     thai_axis_font = get_thai_font_properties(size=11)
     top_ax.set_xlabel("\u0e23\u0e30\u0e22\u0e30\u0e17\u0e32\u0e07 (\u0e40\u0e21\u0e15\u0e23)", fontproperties=thai_axis_font)
     top_ax.set_ylabel("\u0e23\u0e30\u0e22\u0e30\u0e17\u0e32\u0e07 (\u0e40\u0e21\u0e15\u0e23)", fontproperties=thai_axis_font)
 
-    # Draw shorter trees first so trunks of emergent trees remain visible instead
-    # of being hidden behind the crowns of lower neighbouring trees.
-    for row in draw_df.sort_values(["height_m", "crown_width"], ascending=[True, False]).itertuples():
-        if visible_tree_indices is None or int(row.Index) in visible_tree_indices:
-            artists = draw_tree(profile_ax, row, species_style_map=species_style_map, visible_parts=visible_parts)
-            if capture_layer_parts is not None:
-                tree_part_artists[int(row.Index)] = artists
+    tree_part_artists: dict[int, dict[str, object]] = {}
+    for row in draw_df.sort_values(["crown_width", "height_m"], ascending=[False, False]).itertuples():
+        if visible_tree_indices is not None and int(row.Index) not in visible_tree_indices:
+            continue
+        tree_part_artists[int(row.Index)] = draw_tree(
+            profile_ax,
+            row,
+            species_style_map=species_style_map,
+            tree_style_map=editor_tree_styles,
+            tree_transform_map=tree_transform_map,
+        )
 
-    # Compare every survey on the same 20 m minimum scale.  Keep a small
-    # headroom above the final tick so its label remains fully visible.
-    profile_top = max(
-        20.0,
-        max(
-            estimate_tree_profile_top(row, species_style_map)
-            for row in draw_df.itertuples()
-        ) + 0.8,
-    )
-    y_tick_top = float(np.ceil(profile_top / 5.0) * 5.0)
-    y_axis_top = y_tick_top + 0.75
-    major_y_step = 5.0
-    # Lock every sheet to the same horizontal viewport.  The symmetric five
-    # metre margins preserve boundary crowns while placing 0 and 40 at exactly
-    # the same canvas coordinates in the plan and side views.
-    fixed_x_left = -5.0
-    fixed_x_right = 45.0
-    profile_ax.set_xlim(fixed_x_left, fixed_x_right)
-    top_ax.set_xlim(fixed_x_left, fixed_x_right)
-    # Equal-aspect mode changes the physical axes width when a sheet has a
-    # different Y extent.  Use the locked panel rectangle for page-to-page
-    # alignment instead.
-    top_ax.set_aspect("auto")
-    profile_ax.set_ylim(0, y_axis_top)
+    profile_left, profile_right = compute_profile_limits(draw_df)
+    profile_top = 20.0
+    for row in draw_df.itertuples():
+        transform = (tree_transform_map or {}).get(int(row.Index), {})
+        scale = float(np.clip(float(transform.get("scale", 1.0) or 1.0), 0.2, 12.0))
+        shift_x = float(transform.get("dx", 0.0) or 0.0) / 30.0
+        half_width = float(row.crown_width) * PROFILE_CROWN_WIDTH_SCALE * scale / 2.0
+        profile_left = min(profile_left, float(row.x) + shift_x - half_width)
+        profile_right = max(profile_right, float(row.x) + shift_x + half_width)
+        profile_top = max(profile_top, float(row.height_m) * scale + abs(float(transform.get("dy", 0.0) or 0.0)) / 30.0)
+    profile_top = float(np.ceil(profile_top / 5.0) * 5.0)
+    # The report scale follows the normalized tree heights.  Do not let a
+    # transparent crown margin force a 25 m axis when the tallest tree fits
+    # the standard 20 m frame; the crown may overhang that frame by a few
+    # pixels, but its measured height remains the scale anchor.
+    profile_top = max(profile_top, float(draw_df["height_m"].max()))
+    y_limit_top = float(np.ceil(profile_top / 5.0) * 5.0)
+    # Preserve the full crown overhang around the surveyed profile.
+    # Keep the side-profile canvas consistent across worksheets. The surveyed
+    # transect is 40 m wide; the small outer margin keeps edge crowns visible
+    # without changing the coordinate grid or the 0–40 m labels.
+    profile_ax.set_xlim(-5.0, 45.0)
+    profile_ax.set_ylim(0, y_limit_top)
     profile_ax.set_xticks(np.arange(0, 41, 5))
-    profile_ax.set_yticks(np.arange(0, y_tick_top + 0.1, major_y_step))
+    profile_ax.set_yticks(np.arange(0, y_limit_top + 0.1, 5))
     x_axis_left, x_axis_right = profile_ax.get_xlim()
     profile_ax.set_xticks(np.arange(np.ceil(x_axis_left), np.floor(x_axis_right) + 1, 1), minor=True)
-    profile_ax.set_yticks(np.arange(0, y_tick_top + 0.1, 1), minor=True)
+    profile_ax.set_yticks(np.arange(0, y_limit_top + 0.1, 1), minor=True)
     profile_ax.set_xlabel(
         "\u0e23\u0e30\u0e22\u0e30\u0e17\u0e32\u0e07 (\u0e40\u0e21\u0e15\u0e23)",
         fontproperties=thai_axis_font,
-        labelpad=34 + (12 * max(label_row_count - 2, 0)),
+        labelpad=34,
     )
     profile_ax.set_ylabel("\u0e04\u0e27\u0e32\u0e21\u0e2a\u0e39\u0e07 (\u0e40\u0e21\u0e15\u0e23)", fontproperties=thai_axis_font)
     profile_ax.set_axisbelow(True)
@@ -789,11 +814,11 @@ def render_freeform_sprite_experiment(
     profile_ax.spines[["top", "right", "left", "bottom"]].set_visible(False)
 
     profile_label_transform = blended_transform_factory(profile_ax.transData, profile_ax.transAxes)
-    for row in label_annotations.itertuples():
+    for row in ordered_for_labels.itertuples():
         profile_ax.text(
             label_layout_map[int(row.index)][0],
             -0.055 - (0.065 * label_layout_map[int(row.index)][1]),
-            str(row.label),
+            str(label_map[int(row.index)]),
             transform=profile_label_transform,
             ha="center",
             va="top",
@@ -824,106 +849,141 @@ def render_freeform_sprite_experiment(
     axis_span = max(x_right - x_left, 1.0)
     legend_left = max((0 - x_left) / axis_span, 0.0)
     legend_width = min(40 / axis_span, 1.0 - legend_left)
-    legend_columns = 3 if len(handles) > 8 else min(5, len(handles))
-    legend_font = get_thai_font_properties(size=8.5)
+    legend_font = get_thai_font_properties(size=9.5)
     legend_title_font = get_thai_font_properties(size=10.5, weight="bold")
     legend_ax.legend(
         handles=handles,
         title="ชนิดพันธุ์ไม้",
         loc="center",
         mode="expand",
-        ncol=legend_columns,
+        ncol=5,
         frameon=True,
         fancybox=True,
         framealpha=0.96,
         edgecolor="#d6d6d6",
         prop=legend_font,
         title_fontproperties=legend_title_font,
-        columnspacing=0.8,
-        handletextpad=0.45,
-        borderpad=0.8,
-        labelspacing=0.7,
-        bbox_to_anchor=(legend_left, 0.04, legend_width, 0.92),
+        columnspacing=1.0,
+        handletextpad=0.5,
+        borderpad=0.9,
+        labelspacing=0.8,
+        bbox_to_anchor=(legend_left, 0.08, legend_width, 0.84),
     )
 
-    # Fixed normalized rectangles make every output page pixel-identical in
-    # size and keep both X axes vertically aligned across all worksheets.
-    top_ax.set_position([0.09, 0.64, 0.82, 0.29])
-    profile_ax.set_position([0.09, 0.31, 0.82, 0.25])
-    legend_ax.set_position([0.09, 0.06, 0.82, 0.15])
-    output_dir.mkdir(parents=True, exist_ok=True)
+    figure.subplots_adjust(left=0.09, right=0.91, top=0.96, bottom=0.06, hspace=0.2)
+    # Match the profile panel's visible y-axis/title alignment to the equal-aspect
+    # top view without changing any tree coordinates or profile scale.
     if layer_mode:
         top_ax.clear()
         top_ax.axis("off")
+        top_ax.patch.set_alpha(0)
+        profile_ax.axis("off")
+        profile_ax.patch.set_alpha(0)
         legend_ax.clear()
         legend_ax.axis("off")
+        legend_ax.patch.set_alpha(0)
+        figure.patch.set_alpha(0)
         for label_artist in list(profile_ax.texts):
             label_artist.remove()
-        profile_ax.axis("off")
-        figure.patch.set_alpha(0)
-        if capture_layer_parts is not None:
-            for artists in tree_part_artists.values():
-                for artist in artists.values():
-                    artist.set_visible(False)
-            for tree_id, artists in tree_part_artists.items():
-                for part_name, artist in artists.items():
-                    artist.set_visible(True)
-                    figure.canvas.draw()
-                    rgba = np.asarray(figure.canvas.buffer_rgba()).copy()
-                    image = Image.fromarray(rgba, mode="RGBA")
-                    alpha_bbox = image.getchannel("A").getbbox()
-                    if alpha_bbox is not None:
-                        cropped_path = output_dir / f"tree_{tree_id}_{part_name}.png"
-                        image.crop(alpha_bbox).save(cropped_path, optimize=True)
-                        capture_layer_parts.append({
-                            "treeId": tree_id,
-                            "part": part_name,
-                            "path": cropped_path,
-                            "x": alpha_bbox[0],
-                            "y": alpha_bbox[1],
-                            "w": alpha_bbox[2] - alpha_bbox[0],
-                            "h": alpha_bbox[3] - alpha_bbox[1],
-                            "canvasWidth": rgba.shape[1],
-                            "canvasHeight": rgba.shape[0],
-                        })
-                    artist.set_visible(False)
+
+    figure.canvas.draw()
+    top_position = top_ax.get_position()
+    profile_position = profile_ax.get_position()
+    legend_position = legend_ax.get_position()
+    profile_ax.set_position([top_position.x0, profile_position.y0, top_position.width, profile_position.height])
+    legend_ax.set_position([top_position.x0, legend_position.y0, top_position.width, legend_position.height])
+    figure.canvas.draw()
+
+    if layer_mode and capture_layer_parts is not None:
+        for artists in tree_part_artists.values():
+            for artist in artists.values():
+                artist.set_visible(False)
+        for tree_id, artists in tree_part_artists.items():
+            for part_name, artist in artists.items():
+                artist.set_visible(True)
+                figure.canvas.draw()
+                rgba = np.asarray(figure.canvas.buffer_rgba()).copy()
+                image = Image.fromarray(rgba, mode="RGBA")
+                alpha_bbox = image.getchannel("A").getbbox()
+                if alpha_bbox is not None:
+                    cropped_path = output_dir / f"tree_{tree_id}_{part_name}.png"
+                    image.crop(alpha_bbox).save(cropped_path, optimize=True)
+                    capture_layer_parts.append({
+                        "treeId": tree_id,
+                        "part": part_name,
+                        "path": cropped_path,
+                        "x": alpha_bbox[0],
+                        "y": alpha_bbox[1],
+                        "w": alpha_bbox[2] - alpha_bbox[0],
+                        "h": alpha_bbox[3] - alpha_bbox[1],
+                        "canvasWidth": rgba.shape[1],
+                        "canvasHeight": rgba.shape[0],
+                    })
+                artist.set_visible(False)
+        for artists in tree_part_artists.values():
+            for artist in artists.values():
+                artist.set_visible(True)
+    output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{excel_path.stem}_{sheet_name.replace(' ', '_')}_{output_suffix}.png"
-    figure.savefig(
-        output_path,
-        dpi=dpi,
-        facecolor="none" if layer_mode else "white",
-        transparent=layer_mode,
-    )
+    save_kwargs = {"dpi": dpi}
+    if tight_bbox:
+        save_kwargs["bbox_inches"] = "tight"
+    figure.savefig(output_path, **save_kwargs)
     plt.close(figure)
     return output_path
 
 
+def list_editor_asset_group_ids() -> list[str]:
+    group_ids: list[str] = []
+    for root in EDITOR_ASSET_ROOTS:
+        if not root.is_dir():
+            continue
+        for group_dir in sorted(root.iterdir()):
+            if group_dir.is_dir() and group_dir.name not in group_ids and all(
+                (group_dir / filename).is_file() for filename in ("trunk.png", "first_branch.png", "canopy_side.png")
+            ):
+                group_ids.append(group_dir.name)
+    return sorted(group_ids)
+
+
 def render_editable_profile_scene(excel_path: Path, sheet_name: str, output_dir: Path) -> dict[str, object]:
-    """Render the approved realistic layout as one base plus editable transparent tree parts."""
+    """Render the production editor scene with V3's coherent tree groups."""
     scene_dir = output_dir / sheet_name.replace(" ", "_")
     scene_dir.mkdir(parents=True, exist_ok=True)
+    profile_df = load_profile_sheet(excel_path, sheet_name)
+    group_ids = list_editor_asset_group_ids()
+    assignments = {
+        int(index): group_ids[position % len(group_ids)]
+        for position, index in enumerate(profile_df.index)
+    } if group_ids else {}
+
     base_path = render_freeform_sprite_experiment(
         excel_path,
         sheet_name,
         scene_dir,
         visible_tree_indices=set(),
         output_suffix="editor_base",
+        dpi=220,
+        tight_bbox=False,
     )
     with Image.open(base_path) as base_image:
         base_width, base_height = base_image.size
 
-    profile_df = load_profile_sheet(excel_path, sheet_name)
     captured_parts: list[dict[str, object]] = []
     capture_path = render_freeform_sprite_experiment(
         excel_path,
         sheet_name,
         scene_dir,
+        asset_assignments=assignments,
+        asset_roots=EDITOR_ASSET_ROOTS,
         layer_mode=True,
-        dpi=120,
+        dpi=220,
+        tight_bbox=False,
         output_suffix="editor_layer_capture",
         capture_layer_parts=captured_parts,
     )
     capture_path.unlink(missing_ok=True)
+
     parts_by_tree: dict[int, dict[str, dict[str, object]]] = {}
     for captured in captured_parts:
         tree_id = int(captured["treeId"])
@@ -942,9 +1002,9 @@ def render_editable_profile_scene(excel_path: Path, sheet_name: str, output_dir:
         trees.append({
             "id": int(row_index),
             "species": str(row["species"]),
+            "assetGroup": assignments.get(int(row_index)),
             "parts": parts_by_tree.get(int(row_index), {}),
         })
-
     return {
         "name": sheet_name,
         "basePath": base_path,

@@ -4,6 +4,7 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import matplotlib
+matplotlib.use("Agg", force=True)
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -13,35 +14,8 @@ from matplotlib.patches import PathPatch, Rectangle
 from matplotlib.path import Path as MplPath
 from openpyxl import load_workbook
 
+from cal_EIA.profile_validation import EXPECTED_COLUMNS, inspect_profile_workbook, validate_profile_sheet
 
-EXPECTED_COLUMNS = [
-    "no",
-    "species",
-    "girth_cm",
-    "height_m",
-    "first_branch_m",
-    "x",
-    "y",
-    "crown_x_plus",
-    "crown_x_minus",
-    "crown_y_plus",
-    "crown_y_minus",
-]
-
-# A named tree row must be complete.  Previously incomplete rows were silently
-# dropped, which could make a species appear to disappear from a profile.
-PROFILE_NUMERIC_COLUMNS = [
-    "no",
-    "girth_cm",
-    "height_m",
-    "first_branch_m",
-    "x",
-    "y",
-    "crown_x_plus",
-    "crown_x_minus",
-    "crown_y_plus",
-    "crown_y_minus",
-]
 
 PLOT_PALETTE = [
     "#43a047",
@@ -70,9 +44,12 @@ FIRST_BRANCH_MIN_LENGTH = 0.45
 FIRST_BRANCH_MAX_LENGTH = 1.15
 FIRST_BRANCH_BUSH_SCALE = 1.56
 SIDE_PADDING_METERS = 4.6
+PROFILE_MODULE_DIR = Path(__file__).resolve().parent
 THAI_FONT_FILES = [
-    Path(__file__).with_name("Sarabun-Regular.ttf"),
-    Path(__file__).with_name("NotoSansThai-Regular.ttf"),
+    PROFILE_MODULE_DIR / "Sarabun-Regular.ttf",
+    PROFILE_MODULE_DIR / "NotoSansThai-Regular.ttf",
+    PROFILE_MODULE_DIR / "06_fonts" / "Sarabun-Regular.ttf",
+    PROFILE_MODULE_DIR / "06_fonts" / "NotoSansThai-Regular.ttf",
 ]
 
 
@@ -92,51 +69,26 @@ def get_thai_font_properties(size: float | None = None, weight: str | None = Non
 
 def load_profile_sheet(excel_path: Path, sheet_name: str) -> pd.DataFrame:
     raw = pd.read_excel(excel_path, sheet_name=sheet_name, header=[0, 1])
+    if len(raw.columns) != len(EXPECTED_COLUMNS):
+        raise ValueError(
+            f"Sheet '{sheet_name}' must contain exactly {len(EXPECTED_COLUMNS)} profile columns; "
+            f"found {len(raw.columns)}."
+        )
     raw.columns = EXPECTED_COLUMNS
     df = raw.copy()
-    df["species"] = df["species"].fillna("").astype(str).str.strip()
-    for column in PROFILE_NUMERIC_COLUMNS:
-        df[column] = pd.to_numeric(df[column], errors="coerce")
+    df["species"] = df["species"].where(df["species"].notna(), "").astype(str).str.strip()
+    for column in EXPECTED_COLUMNS:
+        if column != "species":
+            df[column] = pd.to_numeric(df[column], errors="coerce")
 
-    named_tree_rows = df["species"].ne("")
-    incomplete_rows = named_tree_rows & df[PROFILE_NUMERIC_COLUMNS].isna().any(axis=1)
-    if incomplete_rows.any():
-        details = []
-        for row_index, row in df.loc[incomplete_rows].iterrows():
-            missing_columns = [
-                column
-                for column in PROFILE_NUMERIC_COLUMNS
-                if pd.isna(row[column])
-            ]
-            # Two header rows precede the DataFrame, so index 0 is Excel row 3.
-            details.append(
-                f"row {row_index + 3} ({row['species']}): {', '.join(missing_columns)}"
-            )
-        raise ValueError(
-            f"Sheet '{sheet_name}' has incomplete tree profile data: "
-            + "; ".join(details)
-        )
-
-    return df.loc[named_tree_rows].reset_index(drop=True)
-
-
-def audit_profile_sheet(excel_path: Path, sheet_name: str) -> dict[str, object]:
-    """Return the exact tree and species counts that will be rendered."""
-    df = load_profile_sheet(excel_path, sheet_name)
-    species = sorted(df["species"].unique().tolist())
-    return {
-        "sheetName": sheet_name,
-        "treeCount": int(len(df)),
-        "speciesCount": int(len(species)),
-        "species": species,
-    }
+    df = df.dropna(subset=["species", "x", "y", "height_m"])
+    df = df[df["species"].ne("")]
+    return df.reset_index(drop=True)
 
 
 def list_profile_sheets(excel_path: Path) -> list[str]:
-    # Explicitly close the workbook so temporary uploaded files can be removed
-    # reliably on Windows after profile generation finishes.
-    with pd.ExcelFile(excel_path) as workbook:
-        return workbook.sheet_names
+    workbook = pd.ExcelFile(excel_path)
+    return workbook.sheet_names
 
 
 def build_species_color_map(species_names: list[str]) -> dict[str, str]:
@@ -233,13 +185,11 @@ def add_bushy_crown(
     ax.add_patch(patch)
 
 
-def draw_top_view(
-    ax: plt.Axes,
-    df: pd.DataFrame,
-    colors: dict[str, str],
-    *,
-    fit_to_plot: bool = False,
-) -> None:
+def draw_top_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) -> None:
+    x_min = float(np.floor(df["x"].min()))
+    x_max = float(np.ceil(df["x"].max()))
+    y_min = float(np.floor(df["y"].min()))
+    y_max = float(np.ceil(df["y"].max()))
     crown_left, crown_right, crown_bottom, crown_top = compute_top_view_limits(df)
 
     for row in df.itertuples(index=False):
@@ -247,17 +197,6 @@ def draw_top_view(
         crown_height = max(row.crown_y_plus + row.crown_y_minus, 0.2)
         crown_center_x = row.x + (row.crown_x_plus - row.crown_x_minus) / 2
         crown_center_y = row.y + (row.crown_y_plus - row.crown_y_minus) / 2
-        if fit_to_plot:
-            # Keep the entire irregular crown visible inside the 40 x 10 m
-            # survey frame. The stem marker remains at its measured position;
-            # only the plan-view crown artwork is shifted inward when its
-            # measured spread crosses a plot edge.
-            crown_width = min(crown_width, 40.0 / 1.16)
-            crown_height = min(crown_height, 10.0 / 1.16)
-            crown_radius_x = crown_width * 0.58
-            crown_radius_y = crown_height * 0.58
-            crown_center_x = float(np.clip(crown_center_x, crown_radius_x, 40.0 - crown_radius_x))
-            crown_center_y = float(np.clip(crown_center_y, crown_radius_y, 10.0 - crown_radius_y))
         add_bushy_crown(
             ax=ax,
             center_x=crown_center_x,
@@ -270,11 +209,13 @@ def draw_top_view(
         )
 
     ax.scatter(df["x"], df["y"], s=8, color="black", zorder=3)
+    plot_width = max(x_max - x_min, 1.0)
+    plot_height = max(y_max - y_min, 1.0)
     ax.add_patch(
         Rectangle(
-            (0.0, 0.0),
-            40.0,
-            10.0,
+            (x_min, y_min),
+            plot_width,
+            plot_height,
             fill=False,
             linewidth=1.8,
             edgecolor="black",
@@ -282,20 +223,13 @@ def draw_top_view(
         )
     )
     ax.set_xlim(np.floor(crown_left - SIDE_PADDING_METERS), np.ceil(crown_right + SIDE_PADDING_METERS))
-    if fit_to_plot:
-        ax.set_ylim(-1.0, 11.0)
-    else:
-        ax.set_ylim(np.floor(crown_bottom - 1.0), np.ceil(crown_top + 1.0))
+    ax.set_ylim(np.floor(crown_bottom - 1.0), np.ceil(crown_top + 1.0))
     ax.set_aspect("equal", adjustable="box")
     ax.set_xlabel("Distance (m.)")
     ax.set_ylabel("Distance (m.)")
     ax.grid(False)
     ax.set_xticks(np.arange(0, 41, 5))
-    ax.set_yticks(
-        np.arange(0, 11, 5)
-        if fit_to_plot
-        else np.arange(0, np.ceil(crown_top + 1.0) + 1, 5)
-    )
+    ax.set_yticks(np.arange(0, np.ceil(crown_top + 1.0) + 1, 5))
     ax.spines[["top", "right", "left", "bottom"]].set_visible(False)
 
 
@@ -310,9 +244,13 @@ def draw_profile_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) ->
         (draw_df["height_m"] - draw_df["first_branch_m"]) * PROFILE_CROWN_HEIGHT_SCALE
     ).clip(lower=0.8)
     draw_df["crown_area"] = draw_df["crown_width"] * draw_df["crown_depth"]
+    profile_y_top = max(20.0, float(np.ceil(draw_df["height_m"].max() / 5.0) * 5.0))
 
     for row in draw_df.itertuples(index=False):
-        trunk_top_y = min(max(row.height_m - row.crown_depth, 0) + row.crown_depth * TRUNK_CROWN_OVERLAP_RATIO, 19.6)
+        trunk_top_y = min(
+            max(row.height_m - row.crown_depth, 0) + row.crown_depth * TRUNK_CROWN_OVERLAP_RATIO,
+            profile_y_top - 0.4,
+        )
         ax.plot(
             [row.x, row.x],
             [0, trunk_top_y],
@@ -330,7 +268,7 @@ def draw_profile_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) ->
             branch_dx = branch_length * np.cos(np.deg2rad(45)) * branch_direction
             branch_dy = branch_length * np.sin(np.deg2rad(45))
             branch_end_x = float(row.x + branch_dx)
-            branch_end_y = float(min(branch_origin_y + branch_dy, 19.65))
+            branch_end_y = float(min(branch_origin_y + branch_dy, profile_y_top - 0.35))
             ax.plot(
                 [row.x, branch_end_x],
                 [branch_origin_y, branch_end_y],
@@ -357,7 +295,7 @@ def draw_profile_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) ->
     for row in crown_df.itertuples(index=False):
         crown_width = float(row.crown_width)
         crown_base_y = float(max(row.height_m - row.crown_depth, 0))
-        crown_depth = float(min(row.crown_depth, 20 - crown_base_y))
+        crown_depth = float(min(row.crown_depth, profile_y_top - crown_base_y))
         crown_center_x = float(row.x + (row.crown_x_plus - row.crown_x_minus) / 2)
         crown_center_y = float(crown_base_y + crown_depth / 2)
         add_bushy_crown(
@@ -375,9 +313,9 @@ def draw_profile_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) ->
 
     profile_left, profile_right = compute_profile_limits(df)
     ax.set_xlim(np.floor(profile_left - SIDE_PADDING_METERS), np.ceil(profile_right + SIDE_PADDING_METERS))
-    ax.set_ylim(0, 20)
+    ax.set_ylim(0, profile_y_top)
     ax.set_xticks(np.arange(0, 41, 5))
-    ax.set_yticks(np.arange(0, 21, 5))
+    ax.set_yticks(np.arange(0, profile_y_top + 1, 5))
     ax.set_xlabel("Distance (m.)")
     ax.set_ylabel("Height (m.)")
     ax.grid(False)
@@ -385,6 +323,10 @@ def draw_profile_view(ax: plt.Axes, df: pd.DataFrame, colors: dict[str, str]) ->
 
 
 def render_sheet_profile(excel_path: Path, sheet_name: str, output_dir: Path) -> Path:
+    validation = validate_profile_sheet(excel_path, sheet_name)
+    if not validation["valid"]:
+        details = "; ".join(str(error) for error in validation["errors"])
+        raise ValueError(f"Sheet '{sheet_name}' is not a valid profile worksheet: {details}")
     df = load_profile_sheet(excel_path, sheet_name)
     if df.empty:
         raise ValueError(f"Sheet '{sheet_name}' does not contain usable tree profile data.")
