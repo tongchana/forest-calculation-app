@@ -9,6 +9,8 @@ FOREST_INCREMENT_RATE = {
     "เต็งรัง": 0.015,
     "dry dipterocarp forest": 0.015,
     "ddf": 0.015,
+    "ป่าชายเลน": 0.022,
+    "ชายเลน": 0.022,
     "ป่าเบญจพรรณ": 0.020,
     "เบญจพรรณ": 0.020,
     "mixed deciduous forest": 0.020,
