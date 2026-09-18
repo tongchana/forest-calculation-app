@@ -84,8 +84,9 @@ def derive_tree_forest_type_map(outputs: dict[str, pd.DataFrame]) -> dict[tuple[
         return {}
     mapping: dict[tuple[str, int, str], str] = {}
     for _, row in detail_tree.iterrows():
+        source_sheet_name = normalize_text(row.get("source_sheet_name")) or normalize_text(row.get("sheet_name"))
         key = (
-            normalize_text(row.get("sheet_name")),
+            source_sheet_name,
             int(row.get("row_no")),
             normalize_text(row.get("Plot")),
         )
@@ -149,7 +150,12 @@ def build_forest_economics_components_from_outputs(
                 warnings.append(f"{display_name}: skipped row with missing plot id")
                 continue
             row_no = int(row.get("row_no"))
-            forest_type = forest_type_map.get((component_key, row_no, plot_id), "")
+            source_sheet_name = normalize_text(row.get("source_sheet_name")) or component_key
+            forest_type = forest_type_map.get((source_sheet_name, row_no, plot_id), "")
+            if not forest_type and source_sheet_name != component_key:
+                # Backward compatibility for output frames produced before
+                # source_sheet_name was preserved through component grouping.
+                forest_type = forest_type_map.get((component_key, row_no, plot_id), "")
             if not forest_type:
                 warnings.append(f"{display_name}: missing forest type for plot '{plot_id}', row {row_no}")
                 continue
