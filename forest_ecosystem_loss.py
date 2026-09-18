@@ -32,6 +32,8 @@ FOREST_TYPE_FLAG_MAP = {
     "tropical evergreen forest": 0,
     "hill evergreen forest": 0,
     "def": 0,
+    "ป่าชายเลน": 0,
+    "ชายเลน": 0,
     "mixed deciduous forest": 1,
     "dry dipterocarp forest": 1,
     "ป่าเบญจพรรณ": 1,

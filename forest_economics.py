@@ -22,6 +22,8 @@ FOREST_INCREMENT_RATE = {
     "tropical evergreen forest": 0.025,
     "hill evergreen forest": 0.025,
     "def": 0.025,
+    "ป่าชายเลน": 0.022,
+    "ชายเลน": 0.022,
 }
 
 
